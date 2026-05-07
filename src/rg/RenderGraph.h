@@ -201,8 +201,38 @@ public:
 				mPasses[edge.from_pass].ref_count++;
 		}
 
+		//TO DO dead-pass culling
+
     // 5. Generate mBarriers from usage transitions
-    // TO DO
+		{
+			// O(U log U)
+			std::vector<u32> order(mUsages.size());
+			std::iota(order.begin(), order.end(), 0);
+			std::sort(order.begin(), order.end(), [&](u32 a, u32 b) {
+				if (mUsages[a].resource_id != mUsages[b].resource_id)
+					return mUsages[a].resource_id < mUsages[b].resource_id;
+				return mPasses[mUsages[a].pass_id].global_index <
+							mPasses[mUsages[b].pass_id].global_index;
+			});
+
+			// O(U) linear walk over consecutive pairs
+			for (size_t i = 0; i + 1 < order.size(); i++) {
+				const RG_ResourceUsage& curr = mUsages[order[i]];
+				const RG_ResourceUsage& next = mUsages[order[i + 1]];
+
+				if (curr.resource_id != next.resource_id) continue;
+				if (!curr.is_write && !next.is_write && curr.usage == next.usage) continue;
+
+				mBarriers.push_back({
+					curr.resource_id,
+					curr.usage,
+					next.usage,
+					mPasses[curr.pass_id].global_index,
+					mPasses[next.pass_id].global_index,
+					RG_BARRIER_TRANSITION
+				});
+			}
+		} 
   }
 
 	// TO DO when allocate is invoked? 
@@ -218,7 +248,22 @@ public:
     // 1. Iterate passes in global_index order
     // 2. Emit mBarriers scheduled before each pass
     // 3. Invoke mExecutors[pass_id]->execute(resources, ctx)
-  }
+	}
+
+	// persistent resources (#16 issue) -
+	// they can't be in mResources if that gets cleared every frame. 
+	// will likely want a separate mPersistentResources array that survives reset().
+	void reset(){
+		mPasses.clear();
+    mSortedPasses.clear();
+    mResources.clear();
+		mPhysicalResources.clear()
+    mUsages.clear();
+    mEdges.clear();
+    mBarriers.clear();
+    mResourceHandlers.clear();
+    mExecutors.clear();
+	}
 
 private:
   std::vector<RG_PassData>                     mPasses;
