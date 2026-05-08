@@ -1,5 +1,6 @@
 #pragma once
 #include "RGTypes.h"
+#include "../rhi/IGPUAllocator.h"
 
 // Per-pass metadata stored in the flat mPasses array. Filled by addPass; global_index set by compile().
 struct RG_PassData {
@@ -12,14 +13,8 @@ struct RG_PassData {
   u32          global_index;  // position in topological order - set by compile()
 };
 
-// Backend allocation record assigned by allocate(). Aliased resources share a pool_id but differ in offset.
-struct RG_PhysicalResource {
-  u32 pool_id;  // which memory pool (placeholder - will become RHI_MemoryPool)
-  u64 offset;   // byte offset within the pool
-  u64 size;     // byte size of the allocation
-};
-
 // Logical resource metadata. physical_id is RG_INVALID_ID until allocate() runs.
+// physical_id indexes into RenderGraph::mPhysicalResources (vector of RGSubAllocation).
 struct RG_ResourceData {
   const char*     name;
   RG_ResourceKind kind;

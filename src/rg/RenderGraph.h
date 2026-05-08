@@ -201,9 +201,15 @@ public:
 				mPasses[edge.from_pass].ref_count++;
 		}
 
-		//TO DO dead-pass culling
+		// TO DO #1: dead-pass culling — remove passes with ref_count == 0 and no RG_PASS_NEVER_CULL from mSortedPasses
 
-    // 5. Generate mBarriers from usage transitions
+    // 5. Create unbound backend resources and query memory requirements
+    // TO DO #23: for each transient resource call vkCreateImage / vkCreateBuffer (unbound),
+    // then vkGetImageMemoryRequirements / vkGetBufferMemoryRequirements to get size and alignment.
+    // Store results so plan() has real sizes. Cache unbound resources by desc hash — if hash matches
+    // next frame, skip recreation entirely.
+
+    // 6. Generate mBarriers from usage transitions
 		{
 			// O(U log U)
 			std::vector<u32> order(mUsages.size());
@@ -235,12 +241,53 @@ public:
 		} 
   }
 
-	// TO DO when allocate is invoked? 
+  // TO DO #5, #23: plan() goes here — offline placement pass that runs after compile().
+  // Simulates resource lifetimes in global_index order using FreeListSubAllocator to assign
+  // byte offsets, computes totalBytes, and caches the result by planHash so allocate() can
+  // skip work on frames where nothing changed.
+
   void allocate() {
-    // TO DO:
-    // 1. Interval graph coloring on transient resources using first_pass / last_pass
-    // 2. Assign physical_id - aliased resources share the same id
-    // 3. Call backend to create memory pool and bind resources at computed offsets
+    // TO DO #5: full implementation — see plan() above and issue #23 for the three-level cache.
+    // 1. If planHash matches cached hash: return early
+    // 2. If totalBytes > block capacity: IGPUAllocator::free + reallocate with 1.5x slack
+    // 3. Bind each resource to its planned offset via vkBindImageMemory / vkBindBufferMemory
+    // 4. Populate mPhysicalResources, set physical_id on each RG_ResourceData
+    // 5. Generate mBarriers for aliasing
+		{
+			std::unordered_map<u32, std::vector<u32>> byPhysical;
+			for (size_t i = 0; i < mResources.size(); i++) {
+				if (mResources[i].physical_id != RG_INVALID_ID)
+					byPhysical[mResources[i].physical_id].push_back(static_cast<u32>(i));
+			}
+
+			for (auto& [pid, resIds] : byPhysical) {
+				if (resIds.size() < 2) continue;
+				std::sort(resIds.begin(), resIds.end(), [&](u32 a, u32 b) {
+					return mResources[a].first_pass < mResources[b].first_pass;
+				});
+
+				for (size_t i = 0; i + 1 < resIds.size(); i++) {
+					const RG_ResourceData& a = mResources[resIds[i]];
+					const RG_ResourceData& b = mResources[resIds[i + 1]];
+
+					RG_Usage lastUsageA  = RG_USAGE_NONE;
+					RG_Usage firstUsageB = RG_USAGE_NONE;
+					for (const RG_ResourceUsage& u : mUsages) {
+						if (u.resource_id == resIds[i]   && mPasses[u.pass_id].global_index == a.last_pass)
+							lastUsageA  = u.usage;
+						if (u.resource_id == resIds[i+1] && mPasses[u.pass_id].global_index == b.first_pass)
+							firstUsageB = u.usage;
+					}
+
+					mBarriers.push_back({
+						resIds[i + 1], lastUsageA, firstUsageB,
+						a.last_pass, b.first_pass,
+						RG_BARRIER_ALIASING
+					});
+				}
+			}
+		}
+
   }
 
   void execute(void* ctx = nullptr) {
@@ -257,7 +304,7 @@ public:
 		mPasses.clear();
     mSortedPasses.clear();
     mResources.clear();
-		mPhysicalResources.clear()
+    mPhysicalResources.clear();
     mUsages.clear();
     mEdges.clear();
     mBarriers.clear();
@@ -274,6 +321,13 @@ private:
   std::vector<RG_Barrier>                      mBarriers;
   std::vector<RGResourceHandler>               mResourceHandlers;
   std::vector<std::unique_ptr<RGPassExecute>>  mExecutors;
+  std::vector<RGSubAllocation>                mPhysicalResources;
+
+  bool doPhysicalResourcesOverlap(const RGSubAllocation& a, const RGSubAllocation& b) {
+    if (a.pool_id != b.pool_id) return false;
+    if (a.offset + a.size <= b.offset || b.offset + b.size <= a.offset) return false;
+    return true;
+  }
 };
 
 // Read-only resource accessor passed into execute callbacks. Passes retrieve their concrete
