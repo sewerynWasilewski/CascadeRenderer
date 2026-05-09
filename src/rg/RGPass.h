@@ -29,11 +29,11 @@ struct RGPassCallback final : RGPassExecute {
 };
 
 // Barrier description passed to IRGBarrierEmitter. Backend translates this into API-specific pipeline barriers.
-struct RG_BarrierInfo {
+struct RGBarrierInfo {
   u32            resource_id;
   u32            before_usage;
   u32            after_usage;
-  RG_BarrierKind kind;
+  RGBarrierKind kind;
 };
 
 // Backend-provided barrier emitter. Injected at execute() time so the graph layer stays API-agnostic.
@@ -46,5 +46,5 @@ struct IRGBarrierEmitter {
   IRGBarrierEmitter& operator=(const IRGBarrierEmitter&) = delete;
   IRGBarrierEmitter& operator=(IRGBarrierEmitter&&) noexcept = delete;
 
-  virtual void emit(const RG_BarrierInfo& info, void* ctx) = 0;
+  virtual void emit(const RGBarrierInfo& info, void* ctx) = 0;
 };
