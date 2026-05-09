@@ -1,0 +1,42 @@
+#pragma once
+#include <cstdint>
+
+using u32 = uint32_t;
+using u64 = uint64_t;
+
+constexpr u32 RG_INVALID_ID = UINT32_MAX;
+
+// Opaque handle to a raw GPU memory block allocated by IGPUAllocator.
+// handle is cast to the backend-specific type (e.g. VmaAllocation) by the allocator.
+struct GPUMemoryBlock {
+  u32   id;
+  u64   size;
+  void* handle;
+};
+
+enum RGMemoryType : u32 {
+  RG_MEMORY_GPU_ONLY   = 0,  // device-local: render targets, depth, GPU-only buffers
+  RG_MEMORY_CPU_TO_GPU = 1,  // host-visible + coherent: staging buffers, per-frame uniforms
+  RG_MEMORY_GPU_TO_CPU = 2,  // host-visible + cached: readback buffers
+};
+
+// Whether a resource is a texture or a buffer.
+enum RGResourceKind : u32 {
+  RG_RESOURCE_TEXTURE = 0,
+  RG_RESOURCE_BUFFER  = 1,
+};
+
+// Transition: normal usage change. Aliasing: memory reuse - receiver starts from UNDEFINED layout.
+enum RGBarrierKind : u32 {
+  RG_BARRIER_TRANSITION = 0,
+  RG_BARRIER_ALIASING   = 1,
+};
+
+// Barrier description passed to IRHIBackend::emitBarrier().
+// before/after_usage store RGUsage bitmask values as u32 to avoid circular dependency on RGTypes.h.
+struct RGBarrierInfo {
+  u32           resource_id;
+  u32           before_usage;
+  u32           after_usage;
+  RGBarrierKind kind;
+};

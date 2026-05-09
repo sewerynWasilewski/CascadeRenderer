@@ -10,6 +10,7 @@
 #include "RGResourceHandler.h"
 #include "RGPass.h"
 #include "RGTypeTraits.h"
+#include "../rhi/IRHIBackend.h"
 
 
 // May it be that two passes write to same resource?
@@ -22,6 +23,8 @@ public:
   RenderGraph() = default;
   RenderGraph(const RenderGraph&) = delete;
   RenderGraph(RenderGraph&&) noexcept = delete;
+
+  void setBackend(IRHIBackend* backend) { mBackend = backend; }
 
   RenderGraph& operator=(const RenderGraph&) = delete;
   RenderGraph& operator=(RenderGraph&&) noexcept = delete;
@@ -66,19 +69,20 @@ public:
   };
 
   template<VIRTUALIZABLE_RESOURCE(T)>
-  RGResourceHandle create(const char* name, RGResourceKind kind, const typename T::Desc& desc) {
+  RGResourceHandle create(const char* name, RGResourceKind kind, RGMemoryType memoryType, const typename T::Desc& desc) {
     const u32 id = static_cast<u32>(mResources.size());
 
     RGResourceData res{};
-    res.name        = name;
-    res.kind        = kind;
-    res.type        = RG_RESOURCE_TRANSIENT;
-    res.desc_index  = static_cast<u32>(mResourceHandlers.size());
-    res.version     = 0;
-    res.first_pass  = RG_INVALID_ID;
-    res.last_pass   = RG_INVALID_ID;
-    res.queue_mask  = 0;
-    res.physical_id = RG_INVALID_ID;
+    res.name           = name;
+    res.kind           = kind;
+    res.type           = RG_RESOURCE_TRANSIENT;
+    res.memory_type    = memoryType;
+    res.desc_index     = static_cast<u32>(mResourceHandlers.size());
+    res.version        = 0;
+    res.first_pass     = RG_INVALID_ID;
+    res.last_pass      = RG_INVALID_ID;
+    res.queue_mask     = 0;
+    res.physical_range = RGMemoryRange{};
     mResources.push_back(res);
 
     mResourceHandlers.push_back(
@@ -89,8 +93,8 @@ public:
   }
 
   template<VIRTUALIZABLE_RESOURCE(T)>
-  RGResourceHandle import(const char* name, RGResourceKind kind, const typename T::Desc& desc) {
-    // TO DO: external resource import
+  RGResourceHandle import(const char* name, RGResourceKind kind, RGMemoryType memoryType, const typename T::Desc& desc) {
+    // TO DO #4: external resource import
     return RGResourceHandle{};
   }
 
@@ -201,12 +205,12 @@ public:
 				mPasses[edge.from_pass].ref_count++;
 		}
 
-		// TO DO #1: dead-pass culling — remove passes with ref_count == 0 and no RG_PASS_NEVER_CULL from mSortedPasses
+		// TO DO #1: dead-pass culling - remove passes with ref_count == 0 and no RG_PASS_NEVER_CULL from mSortedPasses
 
     // 5. Create unbound backend resources and query memory requirements
     // TO DO #23: for each transient resource call vkCreateImage / vkCreateBuffer (unbound),
     // then vkGetImageMemoryRequirements / vkGetBufferMemoryRequirements to get size and alignment.
-    // Store results so plan() has real sizes. Cache unbound resources by desc hash — if hash matches
+    // Store results so plan() has real sizes. Cache unbound resources by desc hash - if hash matches
     // next frame, skip recreation entirely.
 
     // 6. Generate mBarriers from usage transitions
@@ -241,61 +245,33 @@ public:
 		} 
   }
 
-  // TO DO #5, #23: plan() goes here — offline placement pass that runs after compile().
-  // Simulates resource lifetimes in global_index order using FreeListSubAllocator to assign
-  // byte offsets, computes totalBytes, and caches the result by planHash so allocate() can
-  // skip work on frames where nothing changed.
+  // TO DO #5, #23: plan() goes here - offline placement pass that runs after compile().
+  // Groups transient resources by RGMemoryType, simulates lifetimes with an internal free list,
+  // computes per-type totalBytes and per-resource offsets, caches result by planHash.
+
+	void plan() {
+		// TO DO plans a memory layout for all resources
+	}
 
   void allocate() {
-    // TO DO #5: full implementation — see plan() above and issue #23 for the three-level cache.
+    assert(mBackend);
+    // TO DO #5: full implementation - see plan() above and issue #23 for the three-level cache.
     // 1. If planHash matches cached hash: return early
-    // 2. If totalBytes > block capacity: IGPUAllocator::free + reallocate with 1.5x slack
-    // 3. Bind each resource to its planned offset via vkBindImageMemory / vkBindBufferMemory
-    // 4. Populate mPhysicalResources, set physical_id on each RGResourceData
-    // 5. Generate mBarriers for aliasing
-		{
-			std::unordered_map<u32, std::vector<u32>> byPhysical;
-			for (size_t i = 0; i < mResources.size(); i++) {
-				if (mResources[i].physical_id != RG_INVALID_ID)
-					byPhysical[mResources[i].physical_id].push_back(static_cast<u32>(i));
-			}
-
-			for (auto& [pid, resIds] : byPhysical) {
-				if (resIds.size() < 2) continue;
-				std::sort(resIds.begin(), resIds.end(), [&](u32 a, u32 b) {
-					return mResources[a].first_pass < mResources[b].first_pass;
-				});
-
-				for (size_t i = 0; i + 1 < resIds.size(); i++) {
-					const RGResourceData& a = mResources[resIds[i]];
-					const RGResourceData& b = mResources[resIds[i + 1]];
-
-					RGUsage lastUsageA  = RG_USAGE_NONE;
-					RGUsage firstUsageB = RG_USAGE_NONE;
-					for (const RGResourceUsage& u : mUsages) {
-						if (u.resource_id == resIds[i]   && mPasses[u.pass_id].global_index == a.last_pass)
-							lastUsageA  = u.usage;
-						if (u.resource_id == resIds[i+1] && mPasses[u.pass_id].global_index == b.first_pass)
-							firstUsageB = u.usage;
-					}
-
-					mBarriers.push_back({
-						resIds[i + 1], lastUsageA, firstUsageB,
-						a.last_pass, b.first_pass,
-						RG_BARRIER_ALIASING
-					});
-				}
-			}
-		}
-
+    // 2. Per RGMemoryType: if totalBytes > pool capacity, IGPUAllocator::free + reallocate with 1.5x slack (mMemoryPools)
+    // 3. For each entry in plan: vkBindImageMemory / vkBindBufferMemory at planned offset, store gpu handle in RGResourceHandler
+    // 4. Set physical_range on each RGResourceData via IGPUAllocator::suballocate()
+    // 5. Generate mBarriers for aliasing - resources sharing the same pool_id and overlapping byte range
   }
 
-  void execute(void* ctx = nullptr) {
-    // TO DO:
-    // 1. Iterate passes in global_index order
-    // 2. Emit mBarriers scheduled before each pass
-    // 3. Invoke mExecutors[pass_id]->execute(resources, ctx)
-	}
+  void execute(void* cmdBuf = nullptr) {
+    assert(mBackend);
+    // TO DO #3:
+    // 1. Iterate mSortedPasses in order
+    // 2. For each pass emit mBarriers with dst_pass == global_index via mBackend->emitBarrier()
+    // 3. mBackend->beginPass(cmdBuf)
+    // 4. mExecutors[passId]->execute(resources, cmdBuf)
+    // 5. mBackend->endPass(cmdBuf)
+  }
 
 	// persistent resources (#16 issue) -
 	// they can't be in mResources if that gets cleared every frame. 
@@ -304,7 +280,7 @@ public:
 		mPasses.clear();
     mSortedPasses.clear();
     mResources.clear();
-    mPhysicalResources.clear();
+    mMemoryPools.clear();
     mUsages.clear();
     mEdges.clear();
     mBarriers.clear();
@@ -321,12 +297,30 @@ private:
   std::vector<RGBarrier>                      mBarriers;
   std::vector<RGResourceHandler>               mResourceHandlers;
   std::vector<std::unique_ptr<RGPassExecute>>  mExecutors;
-  std::vector<RGSubAllocation>                mPhysicalResources;
+  std::vector<GPUMemoryBlock> mMemoryPools;
+  IRHIBackend*                mBackend = nullptr;
 
-  bool doPhysicalResourcesOverlap(const RGSubAllocation& a, const RGSubAllocation& b) {
-    if (a.pool_id != b.pool_id) return false;
-    if (a.offset + a.size <= b.offset || b.offset + b.size <= a.offset) return false;
-    return true;
+  // FNV-1a hash algorithm
+	u64 computePlanHash() const {
+      constexpr u64 FNV_BASIS = 14695981039346656037ull;
+      constexpr u64 FNV_PRIME = 1099511628211ull;
+
+      u64 hash = FNV_BASIS;
+      auto feed = [&](const void* data, size_t len) {
+          const auto* p = static_cast<const uint8_t*>(data);
+          for (size_t i = 0; i < len; i++)
+              hash = (hash ^ p[i]) * FNV_PRIME;
+      };
+
+      for (const RGResourceData& res : mResources) {
+          if (res.type != RG_RESOURCE_TRANSIENT) continue;
+          const u32 res_id = static_cast<u32>(&res - mResources.data());
+          feed(&res_id, sizeof(res_id));
+          feed(&res.first_pass,  sizeof(res.first_pass));
+          feed(&res.last_pass,   sizeof(res.last_pass));
+          // size + alignment come from VkMemoryRequirements - feed those too once #23 lands
+      }
+      return hash;
   }
 };
 
