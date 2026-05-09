@@ -3,10 +3,10 @@
 #include "../rhi/IGPUAllocator.h"
 
 // Per-pass metadata stored in the flat mPasses array. Filled by addPass; global_index set by compile().
-struct RG_PassData {
+struct RGPassData {
   const char*  name;
-  RG_PassFlags flags;
-  RG_QueueType queue;         // derived from flags at addPass time
+  RGPassFlags flags;
+  RGQueueType queue;         // derived from flags at addPass time
   u32          first_usage;   // index into RenderGraph::mUsages
   u32          usage_count;
   u32          ref_count;     // for dead-pass culling
@@ -15,10 +15,10 @@ struct RG_PassData {
 
 // Logical resource metadata. physical_id is RG_INVALID_ID until allocate() runs.
 // physical_id indexes into RenderGraph::mPhysicalResources (vector of RGSubAllocation).
-struct RG_ResourceData {
+struct RGResourceData {
   const char*     name;
-  RG_ResourceKind kind;
-  RG_ResourceType type;
+  RGResourceKind kind;
+  RGResourceType type;
   u32             desc_index;   // index into mResourceHandlers
   u32             version;      // incremented each time a pass writes this resource
   u32             first_pass;   // global pass index of first use - set by compile()
@@ -28,16 +28,16 @@ struct RG_ResourceData {
 };
 
 // One read or write declaration from a pass setup callback. Stored flat in mUsages; passes index into it.
-struct RG_ResourceUsage {
+struct RGResourceUsage {
   u32      pass_id;
   u32      resource_id;
   u32      version;
-  RG_Usage usage;
+  RGUsage usage;
   bool     is_write;
 };
 
 // Dependency edge between two passes for a specific resource version. Built by compile() from matching write->read pairs.
-struct RG_Edge {
+struct RGEdge {
   u32 from_pass;
   u32 to_pass;
   u32 resource_id;
@@ -45,11 +45,11 @@ struct RG_Edge {
 };
 
 // GPU barrier scheduled before dst_pass. ALIASING barriers additionally signal memory reuse from UNDEFINED layout.
-struct RG_Barrier {
+struct RGBarrier {
   u32          resource_id;
   u32          before_usage;
   u32          after_usage;
   u32          src_pass;
   u32          dst_pass;
-  RG_BarrierKind kind;
+  RGBarrierKind kind;
 };

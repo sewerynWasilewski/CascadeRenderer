@@ -40,18 +40,18 @@ public:
 
     // Returns a new handle with incremented version.
     // Use the returned handle for any subsequent reads in other passes.
-    RGResourceHandle write(RGResourceHandle handle, RG_Usage usage) {
+    RGResourceHandle write(RGResourceHandle handle, RGUsage usage) {
       assert(handle.valid());
-      RG_ResourceData& res = mRG.mResources[handle.id];
+      RGResourceData& res = mRG.mResources[handle.id];
       res.queue_mask |= rg_queue_bit(mRG.mPasses[mPassId].queue);
       mRG.mUsages.push_back({ mPassId, handle.id, handle.version, usage, true });
       res.version++;
       return RGResourceHandle{ handle.id, res.version };
     }
 
-    RGResourceHandle read(RGResourceHandle handle, RG_Usage usage) {
+    RGResourceHandle read(RGResourceHandle handle, RGUsage usage) {
       assert(handle.valid());
-      RG_ResourceData& res = mRG.mResources[handle.id];
+      RGResourceData& res = mRG.mResources[handle.id];
       res.queue_mask |= rg_queue_bit(mRG.mPasses[mPassId].queue);
       mRG.mUsages.push_back({ mPassId, handle.id, handle.version, usage, false });
       return handle;
@@ -66,10 +66,10 @@ public:
   };
 
   template<VIRTUALIZABLE_RESOURCE(T)>
-  RGResourceHandle create(const char* name, RG_ResourceKind kind, const typename T::Desc& desc) {
+  RGResourceHandle create(const char* name, RGResourceKind kind, const typename T::Desc& desc) {
     const u32 id = static_cast<u32>(mResources.size());
 
-    RG_ResourceData res{};
+    RGResourceData res{};
     res.name        = name;
     res.kind        = kind;
     res.type        = RG_RESOURCE_TRANSIENT;
@@ -89,13 +89,13 @@ public:
   }
 
   template<VIRTUALIZABLE_RESOURCE(T)>
-  RGResourceHandle import(const char* name, RG_ResourceKind kind, const typename T::Desc& desc) {
+  RGResourceHandle import(const char* name, RGResourceKind kind, const typename T::Desc& desc) {
     // TO DO: external resource import
     return RGResourceHandle{};
   }
 
   template<typename Setup, typename Execute>
-  RGPassHandle addPass(const char* name, RG_PassFlags flags, Setup&& setup, Execute&& exec) {
+  RGPassHandle addPass(const char* name, RGPassFlags flags, Setup&& setup, Execute&& exec) {
     static_assert(std::is_invocable_v<Setup, PassBuilder&>,
       "Invalid setup callback");
     static_assert(std::is_invocable_v<Execute, RGResources&, void*>,
@@ -103,7 +103,7 @@ public:
 
     const u32 passId = static_cast<u32>(mPasses.size());
 
-    RG_PassData pass{};
+    RGPassData pass{};
     pass.name         = name;
     pass.flags        = flags;
     pass.queue        = rg_queue_from_flags(flags);
@@ -156,7 +156,7 @@ public:
       const u32 passCount = static_cast<u32>(mPasses.size());
       std::vector<u32> indegree(passCount, 0);
 
-      for (const RG_Edge& edge : mEdges) {
+      for (const RGEdge& edge : mEdges) {
         if (edge.to_pass != RG_INVALID_ID)
           indegree[edge.to_pass]++;
       }
@@ -175,7 +175,7 @@ public:
         mPasses[passId].global_index = static_cast<u32>(mSortedPasses.size());
         mSortedPasses.push_back(passId);
 
-        for (const RG_Edge& edge : mEdges) {
+        for (const RGEdge& edge : mEdges) {
           if (edge.from_pass == passId && edge.to_pass != RG_INVALID_ID) {
             if (--indegree[edge.to_pass] == 0)
               queue.push_back(edge.to_pass);
@@ -189,14 +189,14 @@ public:
     for (size_t i = 0; i < mUsages.size(); i++) {
       const u32 gidx = mPasses[mUsages[i].pass_id].global_index;
       if (gidx == RG_INVALID_ID) continue;
-      RG_ResourceData& res = mResources[mUsages[i].resource_id];
+      RGResourceData& res = mResources[mUsages[i].resource_id];
       if (res.first_pass == RG_INVALID_ID || gidx < res.first_pass) res.first_pass = gidx;
       if (res.last_pass  == RG_INVALID_ID || gidx > res.last_pass)  res.last_pass  = gidx;
     }
 
     // 4. Ref-count based dead-pass culling
 		// O(E)
-		for (const RG_Edge& edge : mEdges) {
+		for (const RGEdge& edge : mEdges) {
 			if (edge.to_pass != RG_INVALID_ID)
 				mPasses[edge.from_pass].ref_count++;
 		}
@@ -223,8 +223,8 @@ public:
 
 			// O(U) linear walk over consecutive pairs
 			for (size_t i = 0; i + 1 < order.size(); i++) {
-				const RG_ResourceUsage& curr = mUsages[order[i]];
-				const RG_ResourceUsage& next = mUsages[order[i + 1]];
+				const RGResourceUsage& curr = mUsages[order[i]];
+				const RGResourceUsage& next = mUsages[order[i + 1]];
 
 				if (curr.resource_id != next.resource_id) continue;
 				if (!curr.is_write && !next.is_write && curr.usage == next.usage) continue;
@@ -251,7 +251,7 @@ public:
     // 1. If planHash matches cached hash: return early
     // 2. If totalBytes > block capacity: IGPUAllocator::free + reallocate with 1.5x slack
     // 3. Bind each resource to its planned offset via vkBindImageMemory / vkBindBufferMemory
-    // 4. Populate mPhysicalResources, set physical_id on each RG_ResourceData
+    // 4. Populate mPhysicalResources, set physical_id on each RGResourceData
     // 5. Generate mBarriers for aliasing
 		{
 			std::unordered_map<u32, std::vector<u32>> byPhysical;
@@ -267,12 +267,12 @@ public:
 				});
 
 				for (size_t i = 0; i + 1 < resIds.size(); i++) {
-					const RG_ResourceData& a = mResources[resIds[i]];
-					const RG_ResourceData& b = mResources[resIds[i + 1]];
+					const RGResourceData& a = mResources[resIds[i]];
+					const RGResourceData& b = mResources[resIds[i + 1]];
 
-					RG_Usage lastUsageA  = RG_USAGE_NONE;
-					RG_Usage firstUsageB = RG_USAGE_NONE;
-					for (const RG_ResourceUsage& u : mUsages) {
+					RGUsage lastUsageA  = RG_USAGE_NONE;
+					RGUsage firstUsageB = RG_USAGE_NONE;
+					for (const RGResourceUsage& u : mUsages) {
 						if (u.resource_id == resIds[i]   && mPasses[u.pass_id].global_index == a.last_pass)
 							lastUsageA  = u.usage;
 						if (u.resource_id == resIds[i+1] && mPasses[u.pass_id].global_index == b.first_pass)
@@ -313,12 +313,12 @@ public:
 	}
 
 private:
-  std::vector<RG_PassData>                     mPasses;
+  std::vector<RGPassData>                     mPasses;
   std::vector<u32>                             mSortedPasses;
-  std::vector<RG_ResourceData>                 mResources;
-  std::vector<RG_ResourceUsage>                mUsages;
-  std::vector<RG_Edge>                         mEdges;
-  std::vector<RG_Barrier>                      mBarriers;
+  std::vector<RGResourceData>                 mResources;
+  std::vector<RGResourceUsage>                mUsages;
+  std::vector<RGEdge>                         mEdges;
+  std::vector<RGBarrier>                      mBarriers;
   std::vector<RGResourceHandler>               mResourceHandlers;
   std::vector<std::unique_ptr<RGPassExecute>>  mExecutors;
   std::vector<RGSubAllocation>                mPhysicalResources;
