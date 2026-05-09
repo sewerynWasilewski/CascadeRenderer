@@ -1,10 +1,5 @@
 #pragma once
-#include <cstdint>
-
-using u32 = uint32_t;
-using u64 = uint64_t;
-
-constexpr u32 RG_INVALID_ID = UINT32_MAX;
+#include "../gpu_types.h"
 
 // Opaque index into the graph's pass array. Returned by addPass, not versioned.
 struct RGPassHandle {
@@ -64,20 +59,9 @@ enum RGUsage : u32 {
   RG_USAGE_UNIFORM_BUFFER     = 1 << 8,
 };
 
-// Whether a resource is a texture or a buffer.
-enum RGResourceKind : u32 {
-  RG_RESOURCE_TEXTURE = 0,
-  RG_RESOURCE_BUFFER  = 1,
-};
-
 // Ownership model: transient resources are allocated by the graph; external ones are imported.
 enum RGResourceType : u32 {
   RG_RESOURCE_TRANSIENT = 0,
   RG_RESOURCE_EXTERNAL  = 1,
 };
 
-// Transition: normal usage change. Aliasing: memory reuse - receiver starts from UNDEFINED layout.
-enum RGBarrierKind : u32 {
-  RG_BARRIER_TRANSITION = 0,
-  RG_BARRIER_ALIASING   = 1,
-};
