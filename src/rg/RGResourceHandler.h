@@ -4,17 +4,11 @@
 #include "RGTypes.h"
 #include "RGTypeTraits.h"
 
-// Owns one logical resource's virtual dispatch table. Wraps any Virtualizable T behind IResource so the
-// graph can call create/destroy/preRead/preWrite without knowing the concrete backend type.
+struct IRHIBackend;
+
 class RGResourceHandler {
   friend class RenderGraph;
-
 public:
-  enum class Ownership : u32 {
-    Transient = 0,
-    Imported  = 1,
-  };
-
   RGResourceHandler() = delete;
   ~RGResourceHandler() = default;
   RGResourceHandler(const RGResourceHandler&) = delete;
@@ -23,59 +17,55 @@ public:
   RGResourceHandler& operator=(const RGResourceHandler&) = delete;
   RGResourceHandler& operator=(RGResourceHandler&&) noexcept = delete;
 
-  void create(void* allocator)  { assert(isTransient()); mResource->create(allocator); }
-  void destroy(void* allocator) { assert(isTransient()); mResource->destroy(allocator); }
-  void preRead(void* context)   { mResource->preRead(context); }
-  void preWrite(void* context)  { mResource->preWrite(context); }
-
-  bool isTransient() const { return mOwnership == Ownership::Transient; }
-  bool isImported()  const { return mOwnership == Ownership::Imported; }
+  bool isTransient() const { return mType == RG_RESOURCE_TRANSIENT; }
+  bool isExternal()  const { return mType == RG_RESOURCE_EXTERNAL; }
 
   template<typename T>
   T& get() {
-    assert(mResource->typeId == typeIdOf<T>() && "Wrong resource type requested");
-    return static_cast<ResourceModel<T>*>(mResource.get())->mResource;
+    assert(mSlot->typeId == typeIdOf<T>() && "Wrong resource type requested");
+    return static_cast<Slot<T>*>(mSlot.get())->resource;
   }
 
 private:
-  // Each instantiation has its own static tag - its address is a unique per-type ID without RTTI.
+  // Address of a per-type static local is unique without RTTI.
   template<typename T>
   static u64 typeIdOf() {
     static const char tag = 0;
     return reinterpret_cast<u64>(&tag);
   }
 
-  // Non-template base so the handler can store heterogeneous resources without knowing T.
-  struct IResource {
-    u64 typeId = 0;  // set by ResourceModel<T> at construction
-    virtual void create(void* allocator) = 0;
-    virtual void destroy(void* allocator) = 0;
-    virtual void preRead(void* context)  = 0;
-    virtual void preWrite(void* context) = 0;
-    virtual ~IResource() = default;
-  };
-
-  // Concrete model - holds the descriptor and the resource together, forwards calls to T's interface.
-  template<typename T>
-  struct ResourceModel final : IResource {
-    ResourceModel(const typename T::Desc& desc, T&& resource)
-      : mDescriptor(desc), mResource(std::move(resource)) { IResource::typeId = RGResourceHandler::typeIdOf<T>(); }
-
-    void create(void* allocator) override  { mResource.create(mDescriptor, allocator); }
-    void destroy(void* allocator) override { mResource.destroy(mDescriptor, allocator); }
-    void preRead(void* context) override   { if constexpr (has_preRead<T>)  mResource.preRead(mDescriptor, context); }
-    void preWrite(void* context) override  { if constexpr (has_preWrite<T>) mResource.preWrite(mDescriptor, context); }
-
-    const typename T::Desc mDescriptor;
-    T                      mResource;
+  struct SlotBase {
+    u64 typeId = 0;
+    virtual ~SlotBase() = default;
+    virtual void* createGPUResource(IRHIBackend* backend) const = 0;
+    virtual void  destroyGPUResource(IRHIBackend* backend, void* handle) const = 0;
   };
 
   template<typename T>
-  RGResourceHandler(Ownership ownership, u32 id, const typename T::Desc& desc, T&& resource)
-    : mOwnership(ownership), mId(id),
-      mResource(std::make_unique<ResourceModel<T>>(desc, std::forward<T>(resource))) {}
+  struct Slot final : SlotBase {
+    Slot(const typename T::Desc& d, T&& r)
+      : desc(d), resource(std::move(r)) { typeId = typeIdOf<T>(); }
 
-  Ownership                  mOwnership;
-  const u32                  mId;
-  std::unique_ptr<IResource> mResource;
+    void* createGPUResource(IRHIBackend* backend) const override {
+      return T::createGPU(desc, backend);
+    }
+    void destroyGPUResource(IRHIBackend* backend, void* handle) const override {
+      T::destroyGPU(desc, backend, handle);
+    }
+
+    typename T::Desc desc;
+    T                resource;
+  };
+
+  void* createGPUResource(IRHIBackend* backend)                { return mSlot->createGPUResource(backend); }
+  void  destroyGPUResource(IRHIBackend* backend, void* handle) { mSlot->destroyGPUResource(backend, handle); }
+
+  template<typename T>
+  RGResourceHandler(RGResourceType type, u32 id, const typename T::Desc& desc, T&& resource)
+    : mType(type), mId(id),
+      mSlot(std::make_unique<Slot<T>>(desc, std::forward<T>(resource))) {}
+
+  RGResourceType            mType;
+  const u32                 mId;
+  std::unique_ptr<SlotBase> mSlot;
 };
