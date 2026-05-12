@@ -257,7 +257,98 @@ public:
   // 3. Per group: simulate lifetimes with internal free list, assign offsets, compute totalBytes
   void plan() {
     assert(mBackend);
-    // TO DO #5, #23
+
+    struct FreeRange { u64 offset; u64 size; };
+
+    auto align_up = [](u64 value, u64 alignment) -> u64 {
+      return (value + alignment - 1) & ~(alignment - 1);
+    };
+
+    std::vector<u64> planned_offsets(mResources.size(), 0);
+    std::vector<u64> planned_sizes(mResources.size(), 0);
+
+    // Run free-list simulation independently per RGMemoryType
+    for (u32 memType = 0; memType < 3; memType++) {
+      std::vector<u32> sorted;
+      for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
+        if (mResources[i].type        != RG_RESOURCE_TRANSIENT)              continue;
+        if (mResources[i].memory_type != static_cast<RGMemoryType>(memType)) continue;
+        if (mResources[i].first_pass  == RG_INVALID_ID)                      continue;
+        sorted.push_back(i);
+      }
+
+      std::sort(sorted.begin(), sorted.end(), [&](u32 a, u32 b) {
+        if (mResources[a].first_pass != mResources[b].first_pass)
+          return mResources[a].first_pass < mResources[b].first_pass;
+        return mResources[a].last_pass < mResources[b].last_pass;
+      });
+
+      std::vector<u32>       active;
+      std::vector<FreeRange> free_list;
+      u64                    pool_size = 0;
+
+      for (u32 index : sorted) {
+        // Expire resources whose lifetime ended before this one starts
+        std::vector<u32> to_expire;
+        for (u32 a : active) {
+          if (mResources[a].last_pass < mResources[index].first_pass)
+            to_expire.push_back(a);
+        }
+        for (u32 expired : to_expire) {
+          free_list.push_back({ planned_offsets[expired], planned_sizes[expired] });
+          active.erase(std::remove(active.begin(), active.end(), expired), active.end());
+        }
+
+        // Merge adjacent free ranges
+        std::sort(free_list.begin(), free_list.end(), [](const FreeRange& a, const FreeRange& b) {
+          return a.offset < b.offset;
+        });
+        for (size_t i = 0; i + 1 < free_list.size(); ) {
+          if (free_list[i].offset + free_list[i].size == free_list[i + 1].offset) {
+            free_list[i].size += free_list[i + 1].size;
+            free_list.erase(free_list.begin() + i + 1);
+          } else {
+            i++;
+          }
+        }
+
+        const RHIMemoryRequirements req = mBackend->getMemoryRequirements(mGPUHandles[index], mResources[index].kind);
+        const u64 alignment = req.alignment;
+
+        // Best-fit search — smallest range that fits after alignment padding
+        FreeRange* best = nullptr;
+        for (FreeRange& range : free_list) {
+          const u64 aligned_start = align_up(range.offset, alignment);
+          const u64 padding       = aligned_start - range.offset;
+          if (range.size >= req.size + padding) {
+            if (!best || range.size < best->size)
+              best = &range;
+          }
+        }
+
+        u64 offset;
+        if (best) {
+          const u64 aligned_start = align_up(best->offset, alignment);
+          const u64 padding       = aligned_start - best->offset;
+          offset       = aligned_start;
+          best->offset = aligned_start + req.size;
+          best->size  -= padding + req.size;
+          if (best->size == 0)
+            free_list.erase(std::remove_if(free_list.begin(), free_list.end(),
+              [](const FreeRange& r) { return r.size == 0; }), free_list.end());
+        } else {
+          offset    = align_up(pool_size, alignment);
+          pool_size = offset + req.size;
+        }
+
+        planned_offsets[index] = offset;
+        planned_sizes[index]   = req.size;
+        mResources[index].physical_range = { static_cast<u32>(memType), offset, req.size };
+        active.push_back(index);
+      }
+
+      // TO DO #23: store pool_size per memType for allocate(), cache planHash
+    }
   }
 
   void allocate() {
