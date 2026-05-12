@@ -4,6 +4,8 @@
 #include <cassert>
 #include <functional>
 #include <unordered_map>
+#include <numeric>
+#include <algorithm>
 
 #include "RGTypes.h"
 #include "RGData.h"
@@ -84,9 +86,10 @@ public:
     res.queue_mask     = 0;
     res.physical_range = RGMemoryRange{};
     mResources.push_back(res);
+    mGPUHandles.push_back(nullptr);
 
     mResourceHandlers.push_back(
-      RGResourceHandler(RGResourceHandler::Ownership::Transient, id, desc, T{})
+      RGResourceHandler(RG_RESOURCE_TRANSIENT, id, desc, T{})
     );
 
     return RGResourceHandle{ id, 0 };
@@ -207,10 +210,13 @@ public:
 
 		// TO DO #1: dead-pass culling - remove passes with ref_count == 0 and no RG_PASS_NEVER_CULL from mSortedPasses
 
-    // 5. Create unbound backend resources — TO DO #23
-    // For each transient resource: fill RHITextureDesc / RHIBufferDesc from RGResourceHandler,
-    // call mBackend->createImage/createBuffer, store handle in mGPUHandles[resource_id].
-    // Cache by desc hash — if hash matches next frame, skip recreation entirely.
+    // 5. Create unbound backend resources (no memory bound yet)
+    // TO DO #23: skip recreation when desc hash matches cached value
+    assert(mBackend);
+    for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
+      if (mResources[i].type != RG_RESOURCE_TRANSIENT) continue;
+      mGPUHandles[i] = mResourceHandlers[mResources[i].desc_index].createGPUResource(mBackend);
+    }
 		
     // 6. Generate mBarriers from usage transitions
 		{
@@ -278,6 +284,12 @@ public:
 	// they can't be in mResources if that gets cleared every frame. 
 	// will likely want a separate mPersistentResources array that survives reset().
 	void reset(){
+    if (mBackend) {
+      for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
+        if (mGPUHandles[i])
+          mResourceHandlers[mResources[i].desc_index].destroyGPUResource(mBackend, mGPUHandles[i]);
+      }
+    }
 		mPasses.clear();
     mSortedPasses.clear();
     mResources.clear();
