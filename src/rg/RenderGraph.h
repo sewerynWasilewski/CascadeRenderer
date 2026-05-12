@@ -47,8 +47,8 @@ public:
       assert(handle.valid());
       RGResourceData& res = mRG.mResources[handle.id];
       res.queue_mask |= rg_queue_bit(mRG.mPasses[mPassId].queue);
-      mRG.mUsages.push_back({ mPassId, handle.id, handle.version, usage, true });
       res.version++;
+      mRG.mUsages.push_back({ mPassId, handle.id, res.version, usage, true });
       return RGResourceHandle{ handle.id, res.version };
     }
 
