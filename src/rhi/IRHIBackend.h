@@ -10,7 +10,13 @@ struct IRHIBackend {
   IRHIBackend& operator=(const IRHIBackend&) = delete;
   virtual ~IRHIBackend() = default;
 
-  // Memory pool management - called by allocate(). Wraps the internal IGPUAllocator.
+  virtual void* createImage (const RHITextureDesc& desc) = 0;
+  virtual void* createBuffer(const RHIBufferDesc&  desc) = 0;
+  virtual void  destroyImage (void* handle) = 0;
+  virtual void  destroyBuffer(void* handle) = 0;
+
+  virtual RHIMemoryRequirements getMemoryRequirements(void* gpuHandle, RGResourceKind kind) = 0;
+
   virtual GPUMemoryBlock allocatePool(u64 size, RGMemoryType memoryType) = 0;
   virtual void           freePool(GPUMemoryBlock block) = 0;
 
