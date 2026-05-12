@@ -14,6 +14,9 @@ struct GPUMemoryBlock {
   void* handle;
 };
 
+// Backend-agnostic memory type. The backend maps this to Vulkan memoryTypeIndex / D3D12 heap type / Metal storage mode.
+// Declared per-resource by the programmer at create() / import() time.
+// plan() groups transient resources by type — each type gets a separate GPUMemoryBlock.
 enum RGMemoryType : u32 {
   RG_MEMORY_GPU_ONLY   = 0,  // device-local: render targets, depth, GPU-only buffers
   RG_MEMORY_CPU_TO_GPU = 1,  // host-visible + coherent: staging buffers, per-frame uniforms
@@ -39,4 +42,21 @@ struct RGBarrierInfo {
   u32           before_usage;
   u32           after_usage;
   RGBarrierKind kind;
+};
+
+struct RHITextureDesc {
+  u32 width;
+  u32 height;
+  u32 depth;
+  u32 mipLevels;
+  u32 arrayLayers;
+};
+
+struct RHIBufferDesc {
+  u64 size;
+};
+
+struct RHIMemoryRequirements {
+  u64 size;
+  u64 alignment;
 };

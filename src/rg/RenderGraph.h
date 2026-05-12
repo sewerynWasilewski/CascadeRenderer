@@ -207,12 +207,11 @@ public:
 
 		// TO DO #1: dead-pass culling - remove passes with ref_count == 0 and no RG_PASS_NEVER_CULL from mSortedPasses
 
-    // 5. Create unbound backend resources and query memory requirements
-    // TO DO #23: for each transient resource call vkCreateImage / vkCreateBuffer (unbound),
-    // then vkGetImageMemoryRequirements / vkGetBufferMemoryRequirements to get size and alignment.
-    // Store results so plan() has real sizes. Cache unbound resources by desc hash - if hash matches
-    // next frame, skip recreation entirely.
-
+    // 5. Create unbound backend resources — TO DO #23
+    // For each transient resource: fill RHITextureDesc / RHIBufferDesc from RGResourceHandler,
+    // call mBackend->createImage/createBuffer, store handle in mGPUHandles[resource_id].
+    // Cache by desc hash — if hash matches next frame, skip recreation entirely.
+		
     // 6. Generate mBarriers from usage transitions
 		{
 			// O(U log U)
@@ -245,13 +244,15 @@ public:
 		} 
   }
 
-  // TO DO #5, #23: plan() goes here - offline placement pass that runs after compile().
-  // Groups transient resources by RGMemoryType, simulates lifetimes with an internal free list,
-  // computes per-type totalBytes and per-resource offsets, caches result by planHash.
-
-	void plan() {
-		// TO DO plans a memory layout for all resources
-	}
+  // TO DO #5, #23: offline placement pass — runs after compile().
+  // 1. Compute planHash over (resource_id, size, alignment, first_pass, last_pass) using mGPUHandles
+  //    via mBackend->getMemoryRequirements() — early-return if hash matches cached value
+  // 2. Group transient resources by RGMemoryType
+  // 3. Per group: simulate lifetimes with internal free list, assign offsets, compute totalBytes
+  void plan() {
+    assert(mBackend);
+    // TO DO #5, #23
+  }
 
   void allocate() {
     assert(mBackend);
@@ -286,6 +287,7 @@ public:
     mBarriers.clear();
     mResourceHandlers.clear();
     mExecutors.clear();
+    mGPUHandles.clear();
 	}
 
 private:
@@ -298,6 +300,7 @@ private:
   std::vector<RGResourceHandler>               mResourceHandlers;
   std::vector<std::unique_ptr<RGPassExecute>>  mExecutors;
   std::vector<GPUMemoryBlock> mMemoryPools;
+  std::vector<void*>          mGPUHandles;  // parallel to mResources
   IRHIBackend*                mBackend = nullptr;
 
   // FNV-1a hash algorithm
