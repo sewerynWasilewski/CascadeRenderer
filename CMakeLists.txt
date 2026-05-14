@@ -13,5 +13,7 @@ add_subdirectory(vendor/glm)
 
 set(VMA_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/vma/include)
 
+find_package(Vulkan)
+
 add_subdirectory(src)
 add_subdirectory(sandbox)
