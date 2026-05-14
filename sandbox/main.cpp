@@ -69,6 +69,7 @@ int main() {
 
   printf("compiling...\n");
   rg.compile();
+  rg.dumpJSON("build/graph.json");
   printf("done.\n");
 
   return 0;
