@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <numeric>
 #include <algorithm>
+#include <cstdio>
 
 #include "RGTypes.h"
 #include "RGData.h"
@@ -250,9 +251,9 @@ public:
 		} 
   }
 
-  // TO DO #5, #23: offline placement pass — runs after compile().
+  // TO DO #5, #23: offline placement pass - runs after compile().
   // 1. Compute planHash over (resource_id, size, alignment, first_pass, last_pass) using mGPUHandles
-  //    via mBackend->getMemoryRequirements() — early-return if hash matches cached value
+  //    via mBackend->getMemoryRequirements() - early-return if hash matches cached value
   // 2. Group transient resources by RGMemoryType
   // 3. Per group: simulate lifetimes with internal free list, assign offsets, compute totalBytes
   void plan() {
@@ -315,7 +316,7 @@ public:
         const RHIMemoryRequirements req = mBackend->getMemoryRequirements(mGPUHandles[index], mResources[index].kind);
         const u64 alignment = req.alignment;
 
-        // Best-fit search — smallest range that fits after alignment padding
+        // Best-fit search - smallest range that fits after alignment padding
         FreeRange* best = nullptr;
         for (FreeRange& range : free_list) {
           const u64 aligned_start = align_up(range.offset, alignment);
@@ -369,6 +370,60 @@ public:
     // 3. mBackend->beginPass(cmdBuf)
     // 4. mExecutors[passId]->execute(resources, cmdBuf)
     // 5. mBackend->endPass(cmdBuf)
+  }
+
+  void dumpJSON(const char* path) const {
+    FILE* f = fopen(path, "w");
+    assert(f && "dumpJSON: failed to open file");
+
+    auto id_or_null = [&](u32 val) {
+      if (val == RG_INVALID_ID) fprintf(f, "null");
+      else fprintf(f, "%u", val);
+    };
+
+    fprintf(f, "{\n");
+
+    fprintf(f, "  \"passes\": [\n");
+    for (u32 i = 0; i < static_cast<u32>(mPasses.size()); i++) {
+      const RGPassData& p = mPasses[i];
+      const bool culled = p.ref_count == 0 && !(p.flags & RG_PASS_NEVER_CULL);
+      fprintf(f, "    {\"id\":%u,\"name\":\"%s\",\"queue\":%u,\"global_index\":", i, p.name, (u32)p.queue);
+      id_or_null(p.global_index);
+      fprintf(f, ",\"culled\":%s}%s\n", culled ? "true" : "false", i + 1 < mPasses.size() ? "," : "");
+    }
+    fprintf(f, "  ],\n");
+
+    fprintf(f, "  \"resources\": [\n");
+    for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
+      const RGResourceData& r = mResources[i];
+      fprintf(f, "    {\"id\":%u,\"name\":\"%s\",\"kind\":%u,\"memory_type\":%u,\"first_pass\":", i, r.name, (u32)r.kind, (u32)r.memory_type);
+      id_or_null(r.first_pass);
+      fprintf(f, ",\"last_pass\":");
+      id_or_null(r.last_pass);
+      fprintf(f, "}%s\n", i + 1 < mResources.size() ? "," : "");
+    }
+    fprintf(f, "  ],\n");
+
+    fprintf(f, "  \"edges\": [\n");
+    for (u32 i = 0; i < static_cast<u32>(mEdges.size()); i++) {
+      const RGEdge& e = mEdges[i];
+      fprintf(f, "    {\"from_pass\":%u,\"to_pass\":", e.from_pass);
+      id_or_null(e.to_pass);
+      fprintf(f, ",\"resource_id\":%u,\"version\":%u}%s\n", e.resource_id, e.version, i + 1 < mEdges.size() ? "," : "");
+    }
+    fprintf(f, "  ],\n");
+
+    fprintf(f, "  \"barriers\": [\n");
+    for (u32 i = 0; i < static_cast<u32>(mBarriers.size()); i++) {
+      const RGBarrier& b = mBarriers[i];
+      fprintf(f, "    {\"resource_id\":%u,\"src_pass\":%u,\"dst_pass\":%u,\"kind\":%u}%s\n",
+        b.resource_id, b.src_pass, b.dst_pass, (u32)b.kind,
+        i + 1 < mBarriers.size() ? "," : "");
+    }
+    fprintf(f, "  ]\n");
+
+    fprintf(f, "}\n");
+    fclose(f);
   }
 
 	// persistent resources (#16 issue) -
