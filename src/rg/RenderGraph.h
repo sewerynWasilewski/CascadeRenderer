@@ -260,6 +260,11 @@ public:
     assert(mBackend);
 
     struct FreeRange { u64 offset; u64 size; };
+		// FNV-1a hash algorithm constants
+		constexpr u64 FNV_BASIS = 14695981039346656037ull;
+    constexpr u64 FNV_PRIME = 1099511628211ull; 
+
+    struct PlanKey { u32 first_pass, last_pass; u64 size, alignment; };
 
     auto align_up = [](u64 value, u64 alignment) -> u64 {
       return (value + alignment - 1) & ~(alignment - 1);
@@ -269,7 +274,7 @@ public:
     std::vector<u64> planned_sizes(mResources.size(), 0);
 
     // Run free-list simulation independently per RGMemoryType
-    for (u32 memType = 0; memType < 3; memType++) {
+    for (u32 memType = 0; memType <= MAX_RG_MEMORY_TYPE_INDEX; memType++) {
       std::vector<u32> sorted;
       for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
         if (mResources[i].type        != RG_RESOURCE_TRANSIENT)              continue;
@@ -287,6 +292,13 @@ public:
       std::vector<u32>       active;
       std::vector<FreeRange> free_list;
       u64                    pool_size = 0;
+			// FNV-1a hash algorithm
+			u64 hash = FNV_BASIS;
+			auto feed = [&](const void* data, size_t len) {
+        const auto* p = static_cast<const uint8_t*>(data);
+        for (size_t i = 0; i < len; i++)
+          hash = (hash ^ p[i]) * FNV_PRIME;
+      };
 
       for (u32 index : sorted) {
         // Expire resources whose lifetime ended before this one starts
@@ -346,9 +358,17 @@ public:
         planned_sizes[index]   = req.size;
         mResources[index].physical_range = { static_cast<u32>(memType), offset, req.size };
         active.push_back(index);
+
+				const PlanKey key{ mResources[index].first_pass, mResources[index].last_pass, req.size, req.alignment }; 
+				feed(&key, sizeof(key));
       }
 
-      // TO DO #23: store pool_size per memType for allocate(), cache planHash
+			mPoolSizes[memType] = pool_size;
+
+			if(mPlanHashes[memType] != hash){
+				mShouldReallocate[memType] = true;
+				mPlanHashes[memType] = hash; 
+			}
     }
   }
 
@@ -459,30 +479,12 @@ private:
   std::vector<std::unique_ptr<RGPassExecute>>  mExecutors;
   std::vector<GPUMemoryBlock> mMemoryPools;
   std::vector<void*>          mGPUHandles;  // parallel to mResources
+
+  std::array<u64,  MAX_RG_MEMORY_TYPE_INDEX + 1> mPoolSizes        = {};
+  std::array<u64,  MAX_RG_MEMORY_TYPE_INDEX + 1> mPlanHashes       = {};
+  std::array<bool, MAX_RG_MEMORY_TYPE_INDEX + 1> mShouldReallocate = {};
+
   IRHIBackend*                mBackend = nullptr;
-
-  // FNV-1a hash algorithm
-	u64 computePlanHash() const {
-      constexpr u64 FNV_BASIS = 14695981039346656037ull;
-      constexpr u64 FNV_PRIME = 1099511628211ull;
-
-      u64 hash = FNV_BASIS;
-      auto feed = [&](const void* data, size_t len) {
-          const auto* p = static_cast<const uint8_t*>(data);
-          for (size_t i = 0; i < len; i++)
-              hash = (hash ^ p[i]) * FNV_PRIME;
-      };
-
-      for (const RGResourceData& res : mResources) {
-          if (res.type != RG_RESOURCE_TRANSIENT) continue;
-          const u32 res_id = static_cast<u32>(&res - mResources.data());
-          feed(&res_id, sizeof(res_id));
-          feed(&res.first_pass,  sizeof(res.first_pass));
-          feed(&res.last_pass,   sizeof(res.last_pass));
-          // size + alignment come from VkMemoryRequirements - feed those too once #23 lands
-      }
-      return hash;
-  }
 };
 
 // Read-only resource accessor passed into execute callbacks. Passes retrieve their concrete
