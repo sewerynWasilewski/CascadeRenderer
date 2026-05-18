@@ -436,8 +436,8 @@ public:
     fprintf(f, "  \"barriers\": [\n");
     for (u32 i = 0; i < static_cast<u32>(mBarriers.size()); i++) {
       const RGBarrier& b = mBarriers[i];
-      fprintf(f, "    {\"resource_id\":%u,\"src_pass\":%u,\"dst_pass\":%u,\"kind\":%u}%s\n",
-        b.resource_id, b.src_pass, b.dst_pass, (u32)b.kind,
+      fprintf(f, "    {\"resource_id\":%u,\"src_pass\":%u,\"dst_pass\":%u,\"before_usage\":%u,\"after_usage\":%u,\"kind\":%u}%s\n",
+        b.resource_id, b.src_pass, b.dst_pass, b.before_usage, b.after_usage, (u32)b.kind,
         i + 1 < mBarriers.size() ? "," : "");
     }
     fprintf(f, "  ]\n");
