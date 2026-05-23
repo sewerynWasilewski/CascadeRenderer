@@ -2,7 +2,7 @@
 #include "../IRHIBackend.h"
 #include "VkGPUAllocator.h"
 
-// Vulkan backend — implements IRHIBackend and owns the VkGPUAllocator.
+// Vulkan backend - implements IRHIBackend and owns the VkGPUAllocator.
 // TO DO #7, #8: initialize with VkInstance, VkPhysicalDevice, VkDevice, VkQueue.
 class VkRHIBackend final : public IRHIBackend {
 public:
@@ -10,12 +10,12 @@ public:
   ~VkRHIBackend() = default;
 
   void* createImage(const RHITextureDesc& desc) override {
-    // TO DO #23: fill VkImageCreateInfo from desc, call vkCreateImage (unbound — no memory yet)
+    // TO DO #23: fill VkImageCreateInfo from desc, call vkCreateImage (unbound - no memory yet)
     return nullptr;
   }
 
   void* createBuffer(const RHIBufferDesc& desc) override {
-    // TO DO #23: fill VkBufferCreateInfo from desc, call vkCreateBuffer (unbound — no memory yet)
+    // TO DO #23: fill VkBufferCreateInfo from desc, call vkCreateBuffer (unbound - no memory yet)
     return nullptr;
   }
 

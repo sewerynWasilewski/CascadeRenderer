@@ -4,6 +4,8 @@
 #include <cassert>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
+#include <string>
 #include <numeric>
 #include <algorithm>
 #include <cstdio>
@@ -75,23 +77,42 @@ public:
   RGResourceHandle create(const char* name, RGResourceKind kind, RGMemoryType memoryType, const typename T::Desc& desc) {
     const u32 id = static_cast<u32>(mResources.size());
 
+    mResourceHandlers.push_back(RGResourceHandler(RG_RESOURCE_TRANSIENT, id, desc, T{}));
+
+    const u64 newTypeId   = mResourceHandlers[id].typeId();
+    const u64 newDescHash = mResourceHandlers[id].descHash();
+
     RGResourceData res{};
     res.name           = name;
     res.kind           = kind;
     res.type           = RG_RESOURCE_TRANSIENT;
     res.memory_type    = memoryType;
-    res.desc_index     = static_cast<u32>(mResourceHandlers.size());
+    res.desc_index     = id;
     res.version        = 0;
     res.first_pass     = RG_INVALID_ID;
     res.last_pass      = RG_INVALID_ID;
     res.queue_mask     = 0;
     res.physical_range = RGMemoryRange{};
     mResources.push_back(res);
-    mGPUHandles.push_back(nullptr);
 
-    mResourceHandlers.push_back(
-      RGResourceHandler(RG_RESOURCE_TRANSIENT, id, desc, T{})
-    );
+    auto it = mGPUCache.find(name);
+    if (it != mGPUCache.end()) {
+      if (it->second.typeId == newTypeId && it->second.descHash == newDescHash) {
+        mGPUHandles.push_back(it->second.gpuHandle);  // reuse
+      } else {
+        // desc changed — destroy stale handle, mark pool dirty
+        if (mBackend && it->second.gpuHandle)
+          it->second.destroyFn(mBackend, it->second.gpuHandle);
+        it->second = { newTypeId, newDescHash, nullptr,
+                       [desc](IRHIBackend* be, void* h) { T::destroyGPU(desc, be, h); } };
+        mGPUHandles.push_back(nullptr);
+        mShouldReallocate[memoryType] = true;
+      }
+    } else {
+      mGPUCache[name] = { newTypeId, newDescHash, nullptr,
+                          [desc](IRHIBackend* be, void* h) { T::destroyGPU(desc, be, h); } };
+      mGPUHandles.push_back(nullptr);
+    }
 
     return RGResourceHandle{ id, 0 };
   }
@@ -211,12 +232,15 @@ public:
 
 		// TO DO #1: dead-pass culling - remove passes with ref_count == 0 and no RG_PASS_NEVER_CULL from mSortedPasses
 
-    // 5. Create unbound backend resources (no memory bound yet)
-    // TO DO #23: skip recreation when desc hash matches cached value
+    // 5. Create unbound backend resources (no memory bound yet).
+    // create() already reused matching cached handles; only nullptr slots need creation.
+    // Newly created handles are written back into mGPUCache so the next frame can reuse them.
     assert(mBackend);
     for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
       if (mResources[i].type != RG_RESOURCE_TRANSIENT) continue;
-      mGPUHandles[i] = mResourceHandlers[mResources[i].desc_index].createGPUResource(mBackend);
+      if (mGPUHandles[i] == nullptr)
+        mGPUHandles[i] = mResourceHandlers[mResources[i].desc_index].createGPUResource(mBackend);
+      mGPUCache[mResources[i].name].gpuHandle = mGPUHandles[i];
     }
 		
     // 6. Generate mBarriers from usage transitions
@@ -446,17 +470,17 @@ public:
     fclose(f);
   }
 
-	// persistent resources (#16 issue) -
-	// they can't be in mResources if that gets cleared every frame. 
-	// will likely want a separate mPersistentResources array that survives reset().
-	void reset(){
+  // Destroys all GPU resources and clears the cache. Call before destroying the RenderGraph
+  // or when switching backends — not between frames (use reset() for that).
+  void destroy() {
     if (mBackend) {
-      for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
-        if (mGPUHandles[i])
-          mResourceHandlers[mResources[i].desc_index].destroyGPUResource(mBackend, mGPUHandles[i]);
+      for (auto& [name, entry] : mGPUCache) {
+        if (entry.gpuHandle)
+          entry.destroyFn(mBackend, entry.gpuHandle);
       }
     }
-		mPasses.clear();
+    mGPUCache.clear();
+    mPasses.clear();
     mSortedPasses.clear();
     mResources.clear();
     mMemoryPools.clear();
@@ -466,25 +490,69 @@ public:
     mResourceHandlers.clear();
     mExecutors.clear();
     mGPUHandles.clear();
-	}
+  }
+
+  // persistent resources (#16 issue) -
+  // they can't be in mResources if that gets cleared every frame.
+  // will likely want a separate mPersistentResources array that survives reset().
+  void reset() {
+    // Purge cache entries for resources not declared this frame
+    // (conditional resources that disappeared get their GPU handles destroyed here)
+    if (mBackend) {
+      std::unordered_set<std::string_view> declared;
+      for (const auto& res : mResources)
+        declared.insert(res.name);
+
+      for (auto it = mGPUCache.begin(); it != mGPUCache.end(); ) {
+        if (!declared.count(it->first)) {
+          if (it->second.gpuHandle)
+            it->second.destroyFn(mBackend, it->second.gpuHandle);
+          it = mGPUCache.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
+
+    // Clear per-frame graph data — GPU handles and cache survive
+    mPasses.clear();
+    mSortedPasses.clear();
+    mResources.clear();
+    mUsages.clear();
+    mEdges.clear();
+    mBarriers.clear();
+    mResourceHandlers.clear();
+    mExecutors.clear();
+    mGPUHandles.clear();
+  }
 
 private:
+  // Per-frame
   std::vector<RGPassData>                     mPasses;
-  std::vector<u32>                             mSortedPasses;
+  std::vector<u32>                            mSortedPasses;
   std::vector<RGResourceData>                 mResources;
   std::vector<RGResourceUsage>                mUsages;
   std::vector<RGEdge>                         mEdges;
   std::vector<RGBarrier>                      mBarriers;
-  std::vector<RGResourceHandler>               mResourceHandlers;
-  std::vector<std::unique_ptr<RGPassExecute>>  mExecutors;
-  std::vector<GPUMemoryBlock> mMemoryPools;
-  std::vector<void*>          mGPUHandles;  // parallel to mResources
+  std::vector<RGResourceHandler>              mResourceHandlers;
+  std::vector<std::unique_ptr<RGPassExecute>> mExecutors;
+  std::vector<void*>                          mGPUHandles;  // parallel to mResources
+
+  // Persistent (survive reset, freed in destroy)
+  struct GPUCacheEntry {
+    u64   typeId    = 0;
+    u64   descHash  = 0;
+    void* gpuHandle = nullptr;
+    std::function<void(IRHIBackend*, void*)> destroyFn;
+  };
+  std::unordered_map<std::string, GPUCacheEntry> mGPUCache;
+  std::vector<GPUMemoryBlock>                    mMemoryPools;
 
   std::array<u64,  MAX_RG_MEMORY_TYPE_INDEX + 1> mPoolSizes        = {};
   std::array<u64,  MAX_RG_MEMORY_TYPE_INDEX + 1> mPlanHashes       = {};
   std::array<bool, MAX_RG_MEMORY_TYPE_INDEX + 1> mShouldReallocate = {};
 
-  IRHIBackend*                mBackend = nullptr;
+  IRHIBackend* mBackend = nullptr;
 };
 
 // Read-only resource accessor passed into execute callbacks. Passes retrieve their concrete

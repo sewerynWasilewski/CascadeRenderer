@@ -3,6 +3,7 @@
 #include <memory>
 #include "RGTypes.h"
 #include "RGTypeTraits.h"
+#include "core/algorithm.h"
 
 struct IRHIBackend;
 
@@ -15,10 +16,13 @@ public:
   RGResourceHandler(RGResourceHandler&&) noexcept = default;
 
   RGResourceHandler& operator=(const RGResourceHandler&) = delete;
-  RGResourceHandler& operator=(RGResourceHandler&&) noexcept = delete;
+  RGResourceHandler& operator=(RGResourceHandler&&) noexcept = default;
 
   bool isTransient() const { return mType == RG_RESOURCE_TRANSIENT; }
   bool isExternal()  const { return mType == RG_RESOURCE_EXTERNAL; }
+
+  u64 typeId()   { return mSlot->typeId; }
+  u64 descHash() { return mSlot->descHash; }
 
   template<typename T>
   T& get() {
@@ -36,6 +40,7 @@ private:
 
   struct SlotBase {
     u64 typeId = 0;
+    u64 descHash = 0; 
     virtual ~SlotBase() = default;
     virtual void* createGPUResource(IRHIBackend* backend) const = 0;
     virtual void  destroyGPUResource(IRHIBackend* backend, void* handle) const = 0;
@@ -44,7 +49,10 @@ private:
   template<typename T>
   struct Slot final : SlotBase {
     Slot(const typename T::Desc& d, T&& r)
-      : desc(d), resource(std::move(r)) { typeId = typeIdOf<T>(); }
+      : desc(d), resource(std::move(r)) { 
+        typeId = typeIdOf<T>(); 
+        descHash = fnv1a(&d, sizeof(d));
+      }
 
     void* createGPUResource(IRHIBackend* backend) const override {
       return T::createGPU(desc, backend);
@@ -66,6 +74,6 @@ private:
       mSlot(std::make_unique<Slot<T>>(desc, std::forward<T>(resource))) {}
 
   RGResourceType            mType;
-  const u32                 mId;
+  u32                       mId;
   std::unique_ptr<SlotBase> mSlot;
 };
