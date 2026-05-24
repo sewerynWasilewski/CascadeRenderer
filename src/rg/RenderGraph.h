@@ -4,8 +4,6 @@
 #include <cassert>
 #include <functional>
 #include <unordered_map>
-#include <unordered_set>
-#include <string>
 #include <numeric>
 #include <algorithm>
 #include <cstdio>
@@ -15,6 +13,7 @@
 #include "RGResourceHandler.h"
 #include "RGPass.h"
 #include "RGTypeTraits.h"
+#include "TransientResourcePool.h"
 #include "../rhi/IRHIBackend.h"
 
 
@@ -26,10 +25,11 @@ class RenderGraph {
   friend class RGResources;
 public:
   RenderGraph() = default;
+  ~RenderGraph() { if (mBackend) destroy(); }
   RenderGraph(const RenderGraph&) = delete;
   RenderGraph(RenderGraph&&) noexcept = delete;
 
-  void setBackend(IRHIBackend* backend) { mBackend = backend; }
+  void setBackend(IRHIBackend* backend) { mBackend = backend; mPool.setBackend(backend); }
 
   RenderGraph& operator=(const RenderGraph&) = delete;
   RenderGraph& operator=(RenderGraph&&) noexcept = delete;
@@ -76,11 +76,7 @@ public:
   template<VIRTUALIZABLE_RESOURCE(T)>
   RGResourceHandle create(const char* name, RGResourceKind kind, RGMemoryType memoryType, const typename T::Desc& desc) {
     const u32 id = static_cast<u32>(mResources.size());
-
     mResourceHandlers.push_back(RGResourceHandler(RG_RESOURCE_TRANSIENT, id, desc, T{}));
-
-    const u64 newTypeId   = mResourceHandlers[id].typeId();
-    const u64 newDescHash = mResourceHandlers[id].descHash();
 
     RGResourceData res{};
     res.name           = name;
@@ -95,25 +91,7 @@ public:
     res.physical_range = RGMemoryRange{};
     mResources.push_back(res);
 
-    auto it = mGPUCache.find(name);
-    if (it != mGPUCache.end()) {
-      if (it->second.typeId == newTypeId && it->second.descHash == newDescHash) {
-        mGPUHandles.push_back(it->second.gpuHandle);  // reuse
-      } else {
-        // desc changed — destroy stale handle, mark pool dirty
-        if (mBackend && it->second.gpuHandle)
-          it->second.destroyFn(mBackend, it->second.gpuHandle);
-        it->second = { newTypeId, newDescHash, nullptr,
-                       [desc](IRHIBackend* be, void* h) { T::destroyGPU(desc, be, h); } };
-        mGPUHandles.push_back(nullptr);
-        mShouldReallocate[memoryType] = true;
-      }
-    } else {
-      mGPUCache[name] = { newTypeId, newDescHash, nullptr,
-                          [desc](IRHIBackend* be, void* h) { T::destroyGPU(desc, be, h); } };
-      mGPUHandles.push_back(nullptr);
-    }
-
+    mGPUHandles.push_back(nullptr);
     return RGResourceHandle{ id, 0 };
   }
 
@@ -233,14 +211,11 @@ public:
 		// TO DO #1: dead-pass culling - remove passes with ref_count == 0 and no RG_PASS_NEVER_CULL from mSortedPasses
 
     // 5. Create unbound backend resources (no memory bound yet).
-    // create() already reused matching cached handles; only nullptr slots need creation.
-    // Newly created handles are written back into mGPUCache so the next frame can reuse them.
     assert(mBackend);
     for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
       if (mResources[i].type != RG_RESOURCE_TRANSIENT) continue;
-      if (mGPUHandles[i] == nullptr)
-        mGPUHandles[i] = mResourceHandlers[mResources[i].desc_index].createGPUResource(mBackend);
-      mGPUCache[mResources[i].name].gpuHandle = mGPUHandles[i];
+      auto& handler = mResourceHandlers[mResources[i].desc_index];
+      mGPUHandles[i] = handler.acquireFrom(mPool, mBackend);
     }
 		
     // 6. Generate mBarriers from usage transitions
@@ -400,10 +375,15 @@ public:
     assert(mBackend);
     // TO DO #5: full implementation - see plan() above and issue #23 for the three-level cache.
     // 1. If planHash matches cached hash: return early
-    // 2. Per RGMemoryType: if totalBytes > pool capacity, IGPUAllocator::free + reallocate with 1.5x slack (mMemoryPools)
-    // 3. For each entry in plan: vkBindImageMemory / vkBindBufferMemory at planned offset, store gpu handle in RGResourceHandler
+    // 2. Per RGMemoryType where mShouldReallocate[memType] is true:
+    //    - call mPool.flushMemoryType(memType) BEFORE rebinding - vkBindImageMemory is permanent,
+    //      so any handle the pool cached from a previous frame is bound to a stale offset and
+    //      cannot be reused. Flushing forces fresh creation via acquireFrom() on the next compile().
+    //    - IGPUAllocator::free + reallocate with 1.5x slack (mMemoryPools)
+    // 3. For each entry in plan: vkBindImageMemory / vkBindBufferMemory at planned offset
     // 4. Set physical_range on each RGResourceData via IGPUAllocator::suballocate()
     // 5. Generate mBarriers for aliasing - resources sharing the same pool_id and overlapping byte range
+    //    (TransientResourcePool is not involved here - aliasing is a plan() decision, not a handle decision)
   }
 
   void execute(void* cmdBuf = nullptr) {
@@ -470,20 +450,17 @@ public:
     fclose(f);
   }
 
-  // Destroys all GPU resources and clears the cache. Call before destroying the RenderGraph
-  // or when switching backends — not between frames (use reset() for that).
-  void destroy() {
+  void reset() {
     if (mBackend) {
-      for (auto& [name, entry] : mGPUCache) {
-        if (entry.gpuHandle)
-          entry.destroyFn(mBackend, entry.gpuHandle);
+      for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
+        if (mResources[i].type != RG_RESOURCE_TRANSIENT) continue;
+        if (!mGPUHandles[i]) continue;
+        mResourceHandlers[mResources[i].desc_index].releaseTo(mPool, mGPUHandles[i]);
       }
     }
-    mGPUCache.clear();
     mPasses.clear();
     mSortedPasses.clear();
     mResources.clear();
-    mMemoryPools.clear();
     mUsages.clear();
     mEdges.clear();
     mBarriers.clear();
@@ -492,38 +469,18 @@ public:
     mGPUHandles.clear();
   }
 
-  // persistent resources (#16 issue) -
-  // they can't be in mResources if that gets cleared every frame.
-  // will likely want a separate mPersistentResources array that survives reset().
-  void reset() {
-    // Purge cache entries for resources not declared this frame
-    // (conditional resources that disappeared get their GPU handles destroyed here)
+  void destroy() {
+    reset();
+    mPool.flush();
     if (mBackend) {
-      std::unordered_set<std::string_view> declared;
-      for (const auto& res : mResources)
-        declared.insert(res.name);
-
-      for (auto it = mGPUCache.begin(); it != mGPUCache.end(); ) {
-        if (!declared.count(it->first)) {
-          if (it->second.gpuHandle)
-            it->second.destroyFn(mBackend, it->second.gpuHandle);
-          it = mGPUCache.erase(it);
-        } else {
-          ++it;
-        }
-      }
+      for (auto& pool : mMemoryPools)
+        mBackend->freePool(pool);
     }
-
-    // Clear per-frame graph data — GPU handles and cache survive
-    mPasses.clear();
-    mSortedPasses.clear();
-    mResources.clear();
-    mUsages.clear();
-    mEdges.clear();
-    mBarriers.clear();
-    mResourceHandlers.clear();
-    mExecutors.clear();
-    mGPUHandles.clear();
+    mMemoryPools.clear();
+    mPoolSizes        = {};
+    mPlanHashes       = {};
+    mShouldReallocate = {};
+    mBackend = nullptr;
   }
 
 private:
@@ -539,20 +496,14 @@ private:
   std::vector<void*>                          mGPUHandles;  // parallel to mResources
 
   // Persistent (survive reset, freed in destroy)
-  struct GPUCacheEntry {
-    u64   typeId    = 0;
-    u64   descHash  = 0;
-    void* gpuHandle = nullptr;
-    std::function<void(IRHIBackend*, void*)> destroyFn;
-  };
-  std::unordered_map<std::string, GPUCacheEntry> mGPUCache;
-  std::vector<GPUMemoryBlock>                    mMemoryPools;
+  std::vector<GPUMemoryBlock> mMemoryPools;
 
   std::array<u64,  MAX_RG_MEMORY_TYPE_INDEX + 1> mPoolSizes        = {};
   std::array<u64,  MAX_RG_MEMORY_TYPE_INDEX + 1> mPlanHashes       = {};
   std::array<bool, MAX_RG_MEMORY_TYPE_INDEX + 1> mShouldReallocate = {};
 
-  IRHIBackend* mBackend = nullptr;
+  IRHIBackend*          mBackend = nullptr;
+  TransientResourcePool mPool;
 };
 
 // Read-only resource accessor passed into execute callbacks. Passes retrieve their concrete

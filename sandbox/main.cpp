@@ -31,46 +31,41 @@ int main() {
   RenderGraph rg;
   rg.setBackend(&backend);
 
-  RGResourceHandle color  = rg.create<MockTexture>("color",  RG_RESOURCE_TEXTURE, RG_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
-  RGResourceHandle depth  = rg.create<MockTexture>("depth",  RG_RESOURCE_TEXTURE, RG_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
-  RGResourceHandle light  = rg.create<MockTexture>("light",  RG_RESOURCE_TEXTURE, RG_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
-  RGResourceHandle unused = rg.create<MockTexture>("unused", RG_RESOURCE_TEXTURE, RG_MEMORY_GPU_ONLY, MockTexture::Desc{1, 1});
+  for (int frame = 0; frame < 3; frame++) {
+    printf("\n=== frame %d ===\n", frame);
 
-  rg.addPass("GBuffer", RG_PASS_RASTER,
-    [&](RenderGraph::PassBuilder& b) {
-      color = b.write(color, RG_USAGE_COLOR_ATTACHMENT);
-      depth = b.write(depth, RG_USAGE_DEPTH_ATTACHMENT);
-    },
-    [](RGResources&, void*) { printf("  [exec] GBuffer\n"); }
-  );
+    RGResourceHandle color = rg.create<MockTexture>("color", RG_RESOURCE_TEXTURE, RG_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
+    RGResourceHandle depth = rg.create<MockTexture>("depth", RG_RESOURCE_TEXTURE, RG_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
+    RGResourceHandle light = rg.create<MockTexture>("light", RG_RESOURCE_TEXTURE, RG_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
 
-  rg.addPass("Lighting", RG_PASS_RASTER,
-    [&](RenderGraph::PassBuilder& b) {
-      b.read(color, RG_USAGE_SAMPLED_TEXTURE);
-      b.read(depth, RG_USAGE_SAMPLED_TEXTURE);
-      light = b.write(light, RG_USAGE_COLOR_ATTACHMENT);
-    },
-    [](RGResources&, void*) { printf("  [exec] Lighting\n"); }
-  );
+    rg.addPass("GBuffer", RG_PASS_RASTER,
+      [&](RenderGraph::PassBuilder& b) {
+        color = b.write(color, RG_USAGE_COLOR_ATTACHMENT);
+        depth = b.write(depth, RG_USAGE_DEPTH_ATTACHMENT);
+      },
+      [](RGResources&, void*) {}
+    );
 
-  rg.addPass("DeadPass", RG_PASS_RASTER,
-    [&](RenderGraph::PassBuilder& b) {
-      unused = b.write(unused, RG_USAGE_COLOR_ATTACHMENT);
-    },
-    [](RGResources&, void*) { printf("  [exec] DeadPass (should not run)\n"); }
-  );
+    rg.addPass("Lighting", RG_PASS_RASTER,
+      [&](RenderGraph::PassBuilder& b) {
+        b.read(color, RG_USAGE_SAMPLED_TEXTURE);
+        b.read(depth, RG_USAGE_SAMPLED_TEXTURE);
+        light = b.write(light, RG_USAGE_COLOR_ATTACHMENT);
+      },
+      [](RGResources&, void*) {}
+    );
 
-  rg.addPass("Present", static_cast<RGPassFlags>(RG_PASS_RASTER | RG_PASS_NEVER_CULL),
-    [&](RenderGraph::PassBuilder& b) {
-      b.read(light, RG_USAGE_SAMPLED_TEXTURE);
-    },
-    [](RGResources&, void*) { printf("  [exec] Present\n"); }
-  );
+    rg.addPass("Present", static_cast<RGPassFlags>(RG_PASS_RASTER | RG_PASS_NEVER_CULL),
+      [&](RenderGraph::PassBuilder& b) { b.read(light, RG_USAGE_SAMPLED_TEXTURE); },
+      [](RGResources&, void*) {}
+    );
 
-  printf("compiling...\n");
-  rg.compile();
+    printf("  [compile]\n");
+    rg.compile();
+    printf("  [reset]\n");
+    rg.reset();
+  }
+
   rg.dumpJSON("build/graph.json");
-  printf("done.\n");
-
-  return 0;
+  return 0;  // ~RenderGraph() calls destroy() -> pool.flush()
 }

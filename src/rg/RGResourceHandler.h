@@ -3,6 +3,7 @@
 #include <memory>
 #include "RGTypes.h"
 #include "RGTypeTraits.h"
+#include "TransientResourcePool.h"
 #include "core/algorithm.h"
 
 struct IRHIBackend;
@@ -21,8 +22,7 @@ public:
   bool isTransient() const { return mType == RG_RESOURCE_TRANSIENT; }
   bool isExternal()  const { return mType == RG_RESOURCE_EXTERNAL; }
 
-  u64 typeId()   { return mSlot->typeId; }
-  u64 descHash() { return mSlot->descHash; }
+  u64 typeId() { return mSlot->typeId; }
 
   template<typename T>
   T& get() {
@@ -39,18 +39,20 @@ private:
   }
 
   struct SlotBase {
-    u64 typeId = 0;
-    u64 descHash = 0; 
+    u64 typeId   = 0;
+    u64 descHash = 0;  // pool key: FNV-1a of T::Desc bytes
     virtual ~SlotBase() = default;
     virtual void* createGPUResource(IRHIBackend* backend) const = 0;
     virtual void  destroyGPUResource(IRHIBackend* backend, void* handle) const = 0;
+    virtual void* acquireFrom(TransientResourcePool& pool, IRHIBackend* backend) const = 0;
+    virtual void  releaseTo(TransientResourcePool& pool, void* handle) const = 0;
   };
 
   template<typename T>
   struct Slot final : SlotBase {
     Slot(const typename T::Desc& d, T&& r)
-      : desc(d), resource(std::move(r)) { 
-        typeId = typeIdOf<T>(); 
+      : desc(d), resource(std::move(r)) {
+        typeId   = typeIdOf<T>();
         descHash = fnv1a(&d, sizeof(d));
       }
 
@@ -60,6 +62,14 @@ private:
     void destroyGPUResource(IRHIBackend* backend, void* handle) const override {
       T::destroyGPU(desc, backend, handle);
     }
+    void* acquireFrom(TransientResourcePool& pool, IRHIBackend* backend) const override {
+      if (void* h = pool.tryAcquire(typeId, descHash)) return h;
+      return T::createGPU(desc, backend);
+    }
+    void releaseTo(TransientResourcePool& pool, void* handle) const override {
+      pool.release(typeId, descHash, handle,
+        [d = desc](IRHIBackend* be, void* h) { T::destroyGPU(d, be, h); });
+    }
 
     typename T::Desc desc;
     T                resource;
@@ -67,6 +77,8 @@ private:
 
   void* createGPUResource(IRHIBackend* backend)                { return mSlot->createGPUResource(backend); }
   void  destroyGPUResource(IRHIBackend* backend, void* handle) { mSlot->destroyGPUResource(backend, handle); }
+  void* acquireFrom(TransientResourcePool& pool, IRHIBackend* backend) const { return mSlot->acquireFrom(pool, backend); }
+  void  releaseTo(TransientResourcePool& pool, void* handle)           const { mSlot->releaseTo(pool, handle); }
 
   template<typename T>
   RGResourceHandler(RGResourceType type, u32 id, const typename T::Desc& desc, T&& resource)
