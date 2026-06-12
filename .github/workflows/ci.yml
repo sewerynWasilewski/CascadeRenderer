@@ -13,7 +13,10 @@ jobs:
         run: sudo apt-get install -y cmake ninja-build
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -G Ninja
+        # GLFW_BUILD_WAYLAND=OFF: wayland-scanner is not available on the runner.
+        # When tests require a real window (swapchain, surface creation), either install
+        # libwayland-dev xorg-dev on the runner or switch to a headless Xvfb setup.
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -G Ninja -DGLFW_BUILD_WAYLAND=OFF
 
       - name: Build
         run: cmake --build build
