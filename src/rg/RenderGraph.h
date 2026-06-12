@@ -136,23 +136,32 @@ public:
   }
 
   void compile() {
-    // 1. Build mEdges from matching (resource_id, version) write -> read pairs
-    // O(U) - hash map keyed by (resource_id << 32 | version) gives O(1) write lookup per read.
+    // 1. Build mEdges from matching (resource_id, version) write -> read pairs.
     {
       mEdges.reserve(mUsages.size());
-      std::unordered_map<u64, size_t> writeIndex;
-      writeIndex.reserve(mUsages.size());
+      std::unordered_map<u64, u32> writePass;   // key → from_pass
+      std::unordered_map<u64, bool> wasRead;
+      writePass.reserve(mUsages.size());
 
-      for (size_t i = 0; i < mUsages.size(); i++) {
-        const u64 key = (u64)mUsages[i].resource_id << 32 | mUsages[i].version;
-        if (mUsages[i].is_write) {
-          writeIndex[key] = mEdges.size();
-          mEdges.push_back({ mUsages[i].pass_id, RG_INVALID_ID, mUsages[i].resource_id, mUsages[i].version });
-        } else {
-          auto it = writeIndex.find(key);
-          if (it != writeIndex.end())
-            mEdges[it->second].to_pass = mUsages[i].pass_id;
+      for (const auto& u : mUsages) {
+        if (!u.is_write) continue;
+        writePass[(u64)u.resource_id << 32 | u.version] = u.pass_id;
+      }
+
+      for (const auto& u : mUsages) {
+        if (u.is_write) continue;
+        const u64 key = (u64)u.resource_id << 32 | u.version;
+        auto it = writePass.find(key);
+        if (it != writePass.end()) {
+          mEdges.push_back({ it->second, u.pass_id, u.resource_id, u.version });
+          wasRead[key] = true;
         }
+      }
+
+      for (auto& [key, fromPass] : writePass) {
+        if (!wasRead.count(key))
+          mEdges.push_back({ fromPass, RG_INVALID_ID,
+            static_cast<u32>(key >> 32), static_cast<u32>(key) });
       }
     }
 
