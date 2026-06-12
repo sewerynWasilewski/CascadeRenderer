@@ -1,6 +1,6 @@
 #pragma once
 
-u64 fnv1a(const void* data, size_t len) { 
+inline u64 fnv1a(const void* data, size_t len) {
   constexpr u64 FNV_BASIS = 14695981039346656037ull;
   constexpr u64 FNV_PRIME = 1099511628211ull;
   u64 hash = FNV_BASIS;

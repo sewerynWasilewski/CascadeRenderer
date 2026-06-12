@@ -4,6 +4,10 @@
 #include "mock_backend.h"
 #include <algorithm>
 
+// Note: findings/finding2 (fnv1a ODR violation) has no runtime test — the bug manifests
+// as a linker error when two TUs include algorithm.h. The fix (inline) is verified by the
+// fact that this TU and any future TU can both include RenderGraph.h without a link failure.
+
 // Helper: return the global_index (topo position) of a pass by its RGPassHandle.
 // Lower index = earlier in execution order.
 static u32 passOrder(const RenderGraph& rg, RGPassHandle h) {
