@@ -228,10 +228,14 @@ public:
 		// TO DO #1: dead-pass culling - remove passes with ref_count == 0 and no RG_PASS_NEVER_CULL from mSortedPasses
 
     // 5. Create unbound backend resources (no memory bound yet).
+    // Release any handle from a previous compile() call before acquiring a new one —
+    // compile() may be called multiple times without reset() in between (e.g. late pass added).
     assert(mBackend);
     for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
       if (mResources[i].type != RG_RESOURCE_TRANSIENT) continue;
       auto& handler = mResourceHandlers[mResources[i].desc_index];
+      if (mGPUHandles[i])
+        handler.releaseTo(mPool, mGPUHandles[i]);
       mGPUHandles[i] = handler.acquireFrom(mPool, mBackend);
     }
 		

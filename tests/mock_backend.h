@@ -1,7 +1,7 @@
 #pragma once
 #include "rhi/IRHIBackend.h"
 
-struct MockBackend final : IRHIBackend {
+struct MockBackend : IRHIBackend {
   void* createImage(const RHITextureDesc&)                       override { return reinterpret_cast<void*>(0xDEAD); }
   void* createBuffer(const RHIBufferDesc&)                       override { return reinterpret_cast<void*>(0xDEAD); }
   void  destroyImage(void*)                                      override {}
