@@ -135,6 +135,14 @@ public:
     return mResources[handle.id].version == handle.version;
   }
 
+#ifdef RG_ENABLE_TESTS
+  // Temporary - replace with execute()-based behavioral tests once execute() is implemented (#3).
+  // At that point these accessors and RG_ENABLE_TESTS can be removed entirely.
+  const std::vector<u32>& sortedPasses()   const { return mSortedPasses; }
+  const std::vector<RGEdge>& edges()       const { return mEdges; }
+  const std::vector<RGBarrier>& barriers() const { return mBarriers; }
+#endif
+
   void compile() {
     // 1. Build mEdges from matching (resource_id, version) write -> read pairs.
     {

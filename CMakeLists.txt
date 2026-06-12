@@ -17,3 +17,6 @@ find_package(Vulkan)
 
 add_subdirectory(src)
 add_subdirectory(sandbox)
+
+enable_testing()
+add_subdirectory(tests)

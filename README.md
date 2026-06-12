@@ -17,13 +17,29 @@ Passes declare resource reads and writes. The graph resolves dependencies, gener
 
 ## Building
 
-**Requirements:** CMake 3.24+, C++20 compiler. Vulkan SDK (https://vulkan.lunarg.com) is optional - without it the Vulkan backend is excluded but the sandbox still builds.
+**Requirements:** CMake 3.24+, C++20 compiler. [Vulkan SDK](https://vulkan.lunarg.com) is optional - without it the Vulkan backend is excluded but the sandbox still builds.
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ./build/sandbox/sandbox
 ```
+
+## Testing
+
+Tests use [doctest](https://github.com/doctest/doctest) (vendored, no install needed). They cover render graph correctness - pass ordering, edge generation, barrier emission - and run against a `MockBackend` with no GPU required.
+
+```bash
+cmake --build build
+ctest --test-dir build --output-on-failure
+
+# or directly for verbose per-test output:
+./build/tests/rg_tests
+```
+
+Tests are also run automatically on every push via GitHub Actions.
+
+Current tests inspect internal state (`mSortedPasses`, `mEdges`, `mBarriers`) via accessors gated behind `RG_ENABLE_TESTS`. This is a temporary approach - once `execute()` is implemented the tests will be rewritten to observe callback execution order instead, and the internal accessors removed.
 
 ---
 
