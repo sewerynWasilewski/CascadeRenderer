@@ -48,19 +48,19 @@ public:
 
     // Returns a new handle with incremented version.
     // Use the returned handle for any subsequent reads in other passes.
-    RGResourceHandle write(RGResourceHandle handle, RGUsage usage) {
+    RGResourceHandle write(RGResourceHandle handle, RHIUsage usage) {
       assert(handle.valid());
       RGResourceData& res = mRG.mResources[handle.id];
-      res.queue_mask |= rg_queue_bit(mRG.mPasses[mPassId].queue);
+      res.queue_mask |= rhi_queue_bit(mRG.mPasses[mPassId].queue);
       res.version++;
       mRG.mUsages.push_back({ mPassId, handle.id, res.version, usage, true });
       return RGResourceHandle{ handle.id, res.version };
     }
 
-    RGResourceHandle read(RGResourceHandle handle, RGUsage usage) {
+    RGResourceHandle read(RGResourceHandle handle, RHIUsage usage) {
       assert(handle.valid());
       RGResourceData& res = mRG.mResources[handle.id];
-      res.queue_mask |= rg_queue_bit(mRG.mPasses[mPassId].queue);
+      res.queue_mask |= rhi_queue_bit(mRG.mPasses[mPassId].queue);
       mRG.mUsages.push_back({ mPassId, handle.id, handle.version, usage, false });
       return handle;
     }
@@ -74,7 +74,7 @@ public:
   };
 
   template<VIRTUALIZABLE_RESOURCE(T)>
-  RGResourceHandle create(const char* name, RGResourceKind kind, RGMemoryType memoryType, const typename T::Desc& desc) {
+  RGResourceHandle create(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, const typename T::Desc& desc) {
     const u32 id = static_cast<u32>(mResources.size());
     mResourceHandlers.push_back(RGResourceHandler(RG_RESOURCE_TRANSIENT, id, desc, T{}));
 
@@ -96,7 +96,7 @@ public:
   }
 
   template<VIRTUALIZABLE_RESOURCE(T)>
-  RGResourceHandle import(const char* name, RGResourceKind kind, RGMemoryType memoryType, const typename T::Desc& desc) {
+  RGResourceHandle import(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, const typename T::Desc& desc) {
     // TO DO #4: external resource import
     return RGResourceHandle{};
   }
@@ -290,7 +290,7 @@ public:
 					next.usage,
 					mPasses[curr.pass_id].global_index,
 					mPasses[next.pass_id].global_index,
-					RG_BARRIER_TRANSITION
+					RHI_BARRIER_TRANSITION
 				});
 			}
 		} 
@@ -299,7 +299,7 @@ public:
   // TO DO #5, #23: offline placement pass - runs after compile().
   // 1. Compute planHash over (resource_id, size, alignment, first_pass, last_pass) using mGPUHandles
   //    via mBackend->getMemoryRequirements() - early-return if hash matches cached value
-  // 2. Group transient resources by RGMemoryType
+  // 2. Group transient resources by RHIMemoryType
   // 3. Per group: simulate lifetimes with internal free list, assign offsets, compute totalBytes
   void plan() {
     assert(mBackend);
@@ -318,12 +318,12 @@ public:
     std::vector<u64> planned_offsets(mResources.size(), 0);
     std::vector<u64> planned_sizes(mResources.size(), 0);
 
-    // Run free-list simulation independently per RGMemoryType
-    for (u32 memType = 0; memType <= MAX_RG_MEMORY_TYPE_INDEX; memType++) {
+    // Run free-list simulation independently per RHIMemoryType
+    for (u32 memType = 0; memType <= MAX_RHI_MEMORY_TYPE_INDEX; memType++) {
       std::vector<u32> sorted;
       for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
         if (mResources[i].type        != RG_RESOURCE_TRANSIENT)              continue;
-        if (mResources[i].memory_type != static_cast<RGMemoryType>(memType)) continue;
+        if (mResources[i].memory_type != static_cast<RHIMemoryType>(memType)) continue;
         if (mResources[i].first_pass  == RG_INVALID_ID)                      continue;
         sorted.push_back(i);
       }
@@ -423,7 +423,7 @@ public:
     assert(mBackend);
     // TO DO #5: full implementation - see plan() above and issue #23 for the three-level cache.
     // 1. If planHash matches cached hash: return early
-    // 2. Per RGMemoryType where mShouldReallocate[memType] is true:
+    // 2. Per RHIMemoryType where mShouldReallocate[memType] is true:
     //    - call mPool.flushMemoryType(memType) BEFORE rebinding - vkBindImageMemory is permanent,
     //      so any handle the pool cached from a previous frame is bound to a stale offset and
     //      cannot be reused. Flushing forces fresh creation via acquireFrom() on the next compile().
@@ -546,9 +546,9 @@ private:
   // Persistent (survive reset, freed in destroy)
   std::vector<GPUMemoryBlock> mMemoryPools;
 
-  std::array<u64,  MAX_RG_MEMORY_TYPE_INDEX + 1> mPoolSizes        = {};
-  std::array<u64,  MAX_RG_MEMORY_TYPE_INDEX + 1> mPlanHashes       = {};
-  std::array<bool, MAX_RG_MEMORY_TYPE_INDEX + 1> mShouldReallocate = {};
+  std::array<u64,  MAX_RHI_MEMORY_TYPE_INDEX + 1> mPoolSizes        = {};
+  std::array<u64,  MAX_RHI_MEMORY_TYPE_INDEX + 1> mPlanHashes       = {};
+  std::array<bool, MAX_RHI_MEMORY_TYPE_INDEX + 1> mShouldReallocate = {};
 
   IRHIBackend*          mBackend = nullptr;
   TransientResourcePool mPool;
@@ -576,3 +576,4 @@ private:
   explicit RGResources(RenderGraph& rg) : mRG(rg) {}
   RenderGraph& mRG;
 };
+
