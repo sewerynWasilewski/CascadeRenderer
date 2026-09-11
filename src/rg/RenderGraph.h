@@ -434,15 +434,7 @@ public:
     //    (TransientResourcePool is not involved here - aliasing is a plan() decision, not a handle decision)
   }
 
-  void execute(void* cmdBuf = nullptr) {
-    assert(mBackend);
-    // TO DO #3:
-    // 1. Iterate mSortedPasses in order
-    // 2. For each pass emit mBarriers with dst_pass == global_index via mBackend->emitBarrier()
-    // 3. mBackend->beginPass(cmdBuf)
-    // 4. mExecutors[passId]->execute(resources, cmdBuf)
-    // 5. mBackend->endPass(cmdBuf)
-  }
+  void execute(void* cmdBuf = nullptr);
 
   void dumpJSON(const char* path) const {
     FILE* f = fopen(path, "w");

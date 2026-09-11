@@ -30,11 +30,13 @@ enum RHIResourceKind : u32 {
 };
 
 // GPU queue families. Each pass is assigned one; cross-queue resources need ownership transfers.
+// RHI_QUEUE_IGNORED: no ownership transfer — maps to VK_QUEUE_FAMILY_IGNORED, ignored on Metal/D3D12.
 enum RHIQueueType : u32 {
   RHI_QUEUE_GRAPHICS      = 0,
   RHI_QUEUE_COMPUTE       = 1,
   RHI_QUEUE_ASYNC_COMPUTE = 2,
   RHI_QUEUE_TRANSFER      = 3,
+  RHI_QUEUE_IGNORED       = 0xFFFFFFFFu,
 };
 
 // Bitmask of RHIQueueType values — tracks which queues access a resource.
@@ -70,16 +72,17 @@ enum RHIPassType : u32 {
 };
 
 // Barrier description passed to IRHIBackend::emitBarrier(). Built by execute() from RGBarrier.
-// src/dst_queue_family: use VK_QUEUE_FAMILY_IGNORED (0xFFFFFFFF) for single-queue rendering.
+// src/dst_queue: use RHI_QUEUE_IGNORED for barriers with no queue ownership transfer.
+// The backend translates RHIQueueType to its API-specific queue family index.
 struct RHIBarrierInfo {
-  void*           handle;           // VkImage or VkBuffer cast to void*
-  u32             resource_id;      // for debug/logging
-  RHIResourceKind resource_kind;    // TEXTURE or BUFFER — determines which Vk barrier struct to fill
+  void*           handle;        // VkImage or VkBuffer cast to void*
+  u32             resource_id;   // for debug/logging
+  RHIResourceKind resource_kind; // TEXTURE or BUFFER — determines which Vk barrier struct to fill
   RHIUsage        before_usage;
   RHIUsage        after_usage;
   RHIBarrierKind  kind;
-  u32             src_queue_family; // VK_QUEUE_FAMILY_IGNORED for single-queue
-  u32             dst_queue_family;
+  RHIQueueType    src_queue;     // RHI_QUEUE_IGNORED = no ownership transfer
+  RHIQueueType    dst_queue;
 };
 
 struct RHITextureDesc {
