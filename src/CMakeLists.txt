@@ -1,6 +1,6 @@
 set(RENDERER_SOURCES
     renderer/renderer.cpp
-    rg/rg.cpp
+    rg/RenderGraph.cpp
 )
 
 if(Vulkan_FOUND)

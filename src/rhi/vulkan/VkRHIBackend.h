@@ -47,6 +47,8 @@ public:
 
   void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) override {
     // TO DO #11: translate RHIBarrierInfo to VkImageMemoryBarrier2, call vkCmdPipelineBarrier2
+    // Queue translation: RHI_QUEUE_IGNORED → VK_QUEUE_FAMILY_IGNORED (0xFFFFFFFF)
+    // Other RHIQueueType values map to the VkQueueFamilyIndex acquired during device init.
   }
 
   void beginPass(void* cmdBuf, RHIPassType type) override {
