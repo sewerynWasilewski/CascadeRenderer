@@ -38,6 +38,10 @@ using RGQueueMask = u32;
 inline RGQueueMask rg_queue_bit(RGQueueType q)     { return 1u << static_cast<u32>(q); }
 inline bool        rg_is_cross_queue(RGQueueMask m) { return m != 0 && (m & (m - 1)) != 0; }
 
+inline RGPassFlags operator|(RGPassFlags a, RGPassFlags b) {
+  return static_cast<RGPassFlags>(static_cast<u32>(a) | static_cast<u32>(b));
+}
+
 inline RGQueueType rg_queue_from_flags(RGPassFlags f) {
   if (f & RG_PASS_ASYNC_COMPUTE) return RG_QUEUE_ASYNC_COMPUTE;
   if (f & RG_PASS_COMPUTE)       return RG_QUEUE_COMPUTE;
