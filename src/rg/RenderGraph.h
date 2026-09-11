@@ -136,8 +136,6 @@ public:
   }
 
 #ifdef RG_ENABLE_TESTS
-  // Temporary - replace with execute()-based behavioral tests once execute() is implemented (#3).
-  // At that point these accessors and RG_ENABLE_TESTS can be removed entirely.
   const std::vector<u32>& sortedPasses()   const { return mSortedPasses; }
   const std::vector<RGEdge>& edges()       const { return mEdges; }
   const std::vector<RGBarrier>& barriers() const { return mBarriers; }
@@ -147,7 +145,7 @@ public:
     // 1. Build mEdges from matching (resource_id, version) write -> read pairs.
     {
       mEdges.reserve(mUsages.size());
-      std::unordered_map<u64, u32> writePass;   // key → from_pass
+      std::unordered_map<u64, u32> writePass;   // key -> from_pass
       std::unordered_map<u64, bool> wasRead;
       writePass.reserve(mUsages.size());
 
@@ -208,7 +206,33 @@ public:
       }
     }
 
-    // 3. Fill first_pass / last_pass using global_index (must come after topo sort)
+    // 3. Dead-pass culling — must come before first_pass/last_pass so culled passes
+    // don't pollute resource lifetimes and orphan GPU handles.
+    // O(E + P)
+    {
+      for (const RGEdge& edge : mEdges) {
+        if (edge.to_pass != RG_INVALID_ID)
+          mPasses[edge.from_pass].ref_count++;
+      }
+      // Mark culled passes by resetting their global_index to RG_INVALID_ID.
+      for (u32 passId : mSortedPasses) {
+        if (mPasses[passId].ref_count == 0 && !(mPasses[passId].flags & RG_PASS_NEVER_CULL))
+          mPasses[passId].global_index = RG_INVALID_ID;
+      }
+      mSortedPasses.erase(
+        std::remove_if(mSortedPasses.begin(), mSortedPasses.end(),
+          [&](u32 id) { return mPasses[id].global_index == RG_INVALID_ID; }),
+        mSortedPasses.end()
+      );
+      // Re-assign global_index to reflect the post-culling order used by execute() and barriers.
+      for (u32 i = 0; i < static_cast<u32>(mSortedPasses.size()); i++)
+        mPasses[mSortedPasses[i]].global_index = i;
+    }
+
+    // 4. Fill first_pass / last_pass using post-culling global_index.
+    // Culled passes have global_index == RG_INVALID_ID and are automatically skipped,
+    // so resources used only by culled passes stay at RG_INVALID_ID and are skipped
+    // by step 5 (no GPU handle created) and plan() (no placement computed).
     // O(U)
     for (size_t i = 0; i < mUsages.size(); i++) {
       const u32 gidx = mPasses[mUsages[i].pass_id].global_index;
@@ -218,32 +242,33 @@ public:
       if (res.last_pass  == RG_INVALID_ID || gidx > res.last_pass)  res.last_pass  = gidx;
     }
 
-    // 4. Ref-count based dead-pass culling
-		// O(E)
-		for (const RGEdge& edge : mEdges) {
-			if (edge.to_pass != RG_INVALID_ID)
-				mPasses[edge.from_pass].ref_count++;
-		}
-
-		// TO DO #1: dead-pass culling - remove passes with ref_count == 0 and no RG_PASS_NEVER_CULL from mSortedPasses
-
     // 5. Create unbound backend resources (no memory bound yet).
+    // Skip resources never referenced by any live pass (first_pass == RG_INVALID_ID) —
+    // allocating handles for them is wasteful and leaves physical_range in an undefined state.
     // Release any handle from a previous compile() call before acquiring a new one —
     // compile() may be called multiple times without reset() in between (e.g. late pass added).
     assert(mBackend);
     for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
-      if (mResources[i].type != RG_RESOURCE_TRANSIENT) continue;
+      if (mResources[i].type       != RG_RESOURCE_TRANSIENT) continue;
+      if (mResources[i].first_pass == RG_INVALID_ID)         continue;
+      const u32 memType = static_cast<u32>(mResources[i].memory_type);
       auto& handler = mResourceHandlers[mResources[i].desc_index];
       if (mGPUHandles[i])
-        handler.releaseTo(mPool, mGPUHandles[i]);
-      mGPUHandles[i] = handler.acquireFrom(mPool, mBackend);
+        handler.releaseTo(mPool, mGPUHandles[i], memType);
+      mGPUHandles[i] = handler.acquireFrom(mPool, mBackend, memType);
     }
 		
     // 6. Generate mBarriers from usage transitions
 		{
-			// O(U log U)
-			std::vector<u32> order(mUsages.size());
-			std::iota(order.begin(), order.end(), 0);
+			// O(U log U) — exclude usages from culled passes (global_index == RG_INVALID_ID):
+			// they sort to the end and would emit barriers with src/dst_pass = UINT32_MAX,
+			// corrupting dumpJSON output and crashing execute() when it indexes mSortedPasses.
+			std::vector<u32> order;
+			order.reserve(mUsages.size());
+			for (u32 i = 0; i < static_cast<u32>(mUsages.size()); i++) {
+				if (mPasses[mUsages[i].pass_id].global_index != RG_INVALID_ID)
+					order.push_back(i);
+			}
 			std::sort(order.begin(), order.end(), [&](u32 a, u32 b) {
 				if (mUsages[a].resource_id != mUsages[b].resource_id)
 					return mUsages[a].resource_id < mUsages[b].resource_id;
@@ -284,7 +309,7 @@ public:
 		constexpr u64 FNV_BASIS = 14695981039346656037ull;
     constexpr u64 FNV_PRIME = 1099511628211ull; 
 
-    struct PlanKey { u32 first_pass, last_pass; u64 size, alignment; };
+    struct PlanKey { u32 resource_id, first_pass, last_pass; u64 size, alignment; };
 
     auto align_up = [](u64 value, u64 alignment) -> u64 {
       return (value + alignment - 1) & ~(alignment - 1);
@@ -379,15 +404,17 @@ public:
         mResources[index].physical_range = { static_cast<u32>(memType), offset, req.size };
         active.push_back(index);
 
-				const PlanKey key{ mResources[index].first_pass, mResources[index].last_pass, req.size, req.alignment }; 
+				const PlanKey key{ index, mResources[index].first_pass, mResources[index].last_pass, req.size, req.alignment };
 				feed(&key, sizeof(key));
       }
 
 			mPoolSizes[memType] = pool_size;
 
-			if(mPlanHashes[memType] != hash){
+			if (mPlanHashes[memType] != hash) {
 				mShouldReallocate[memType] = true;
-				mPlanHashes[memType] = hash; 
+				mPlanHashes[memType] = hash;
+			} else {
+				mShouldReallocate[memType] = false;
 			}
     }
   }
@@ -476,7 +503,7 @@ public:
       for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
         if (mResources[i].type != RG_RESOURCE_TRANSIENT) continue;
         if (!mGPUHandles[i]) continue;
-        mResourceHandlers[mResources[i].desc_index].releaseTo(mPool, mGPUHandles[i]);
+        mResourceHandlers[mResources[i].desc_index].releaseTo(mPool, mGPUHandles[i], static_cast<u32>(mResources[i].memory_type));
       }
     }
     mPasses.clear();

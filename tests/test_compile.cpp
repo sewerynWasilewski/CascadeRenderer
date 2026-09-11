@@ -40,12 +40,14 @@ TEST_CASE("single writer two readers: both readers scheduled after writer") {
     [](RGResources&, void*) {}
   );
 
-  RGPassHandle readerA = rg.addPass("ReaderA", RG_PASS_RASTER,
+  // NEVER_CULL: leaf passes (no consumers) simulate a swapchain present pass.
+  // Without the flag dead-pass culling removes them from sortedPasses() and before() returns false.
+  RGPassHandle readerA = rg.addPass("ReaderA", RG_PASS_RASTER | RG_PASS_NEVER_CULL,
     [&](RenderGraph::PassBuilder& b) { b.read(color, RG_USAGE_SAMPLED_TEXTURE); },
     [](RGResources&, void*) {}
   );
 
-  RGPassHandle readerB = rg.addPass("ReaderB", RG_PASS_RASTER,
+  RGPassHandle readerB = rg.addPass("ReaderB", RG_PASS_RASTER | RG_PASS_NEVER_CULL,
     [&](RenderGraph::PassBuilder& b) { b.read(color, RG_USAGE_SAMPLED_TEXTURE); },
     [](RGResources&, void*) {}
   );
@@ -132,7 +134,9 @@ TEST_CASE("compile() twice without reset() does not leak GPU handles") {
 
   RGResourceHandle color = rg.create<MockTexture>("color", RG_RESOURCE_TEXTURE,
                                                   RG_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
-  rg.addPass("Writer", RG_PASS_RASTER,
+  // NEVER_CULL: Writer is a leaf pass. Without the flag it is culled and no GPU handle
+  // is created, making the create/destroy count assertions meaningless.
+  rg.addPass("Writer", RG_PASS_RASTER | RG_PASS_NEVER_CULL,
     [&](RenderGraph::PassBuilder& b) { color = b.write(color, RG_USAGE_COLOR_ATTACHMENT); },
     [](RGResources&, void*) {}
   );
