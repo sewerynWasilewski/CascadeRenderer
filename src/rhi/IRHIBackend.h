@@ -15,9 +15,9 @@ struct IRHIBackend {
   virtual void  destroyImage (void* handle) = 0;
   virtual void  destroyBuffer(void* handle) = 0;
 
-  virtual RHIMemoryRequirements getMemoryRequirements(void* gpuHandle, RGResourceKind kind) = 0;
+  virtual RHIMemoryRequirements getMemoryRequirements(void* gpuHandle, RHIResourceKind kind) = 0;
 
-  virtual GPUMemoryBlock allocatePool(u64 size, RGMemoryType memoryType) = 0;
+  virtual GPUMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) = 0;
   virtual void           freePool(GPUMemoryBlock block) = 0;
 
   // Bind a GPU resource handle to a memory block at a given offset - called by allocate().
@@ -25,9 +25,9 @@ struct IRHIBackend {
   virtual void bindMemory(void* gpuHandle, GPUMemoryBlock block, u64 offset) = 0;
 
   // Emit a pipeline barrier before a pass - called by execute(). See issue #11.
-  virtual void emitBarrier(const RGBarrierInfo& info, void* cmdBuf) = 0;
+  virtual void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) = 0;
 
   // Pass framing - called by execute() around each pass executor. See issue #12.
-  virtual void beginPass(void* cmdBuf) = 0;
+  virtual void beginPass(void* cmdBuf, RHIPassType type) = 0;
   virtual void endPass(void* cmdBuf) = 0;
 };

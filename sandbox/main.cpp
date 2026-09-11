@@ -6,12 +6,12 @@ struct MockBackend final : IRHIBackend {
   void* createBuffer(const RHIBufferDesc&)            override { printf("  [backend] createBuffer\n"); return reinterpret_cast<void*>(0xDEAD); }
   void  destroyImage(void*)                           override { printf("  [backend] destroyImage\n"); }
   void  destroyBuffer(void*)                          override { printf("  [backend] destroyBuffer\n"); }
-  RHIMemoryRequirements getMemoryRequirements(void*, RGResourceKind) override { return {0, 1}; }
-  GPUMemoryBlock allocatePool(u64, RGMemoryType)      override { return {}; }
+  RHIMemoryRequirements getMemoryRequirements(void*, RHIResourceKind) override { return {0, 1}; }
+  GPUMemoryBlock allocatePool(u64, RHIMemoryType)      override { return {}; }
   void           freePool(GPUMemoryBlock)             override {}
   void           bindMemory(void*, GPUMemoryBlock, u64) override {}
-  void           emitBarrier(const RGBarrierInfo&, void*) override {}
-  void           beginPass(void*)                     override {}
+  void           emitBarrier(const RHIBarrierInfo&, void*) override {}
+  void           beginPass(void*, RHIPassType)         override {}
   void           endPass(void*)                       override {}
 };
 
@@ -34,29 +34,29 @@ int main() {
   for (int frame = 0; frame < 3; frame++) {
     printf("\n=== frame %d ===\n", frame);
 
-    RGResourceHandle color = rg.create<MockTexture>("color", RG_RESOURCE_TEXTURE, RG_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
-    RGResourceHandle depth = rg.create<MockTexture>("depth", RG_RESOURCE_TEXTURE, RG_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
-    RGResourceHandle light = rg.create<MockTexture>("light", RG_RESOURCE_TEXTURE, RG_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
+    RGResourceHandle color = rg.create<MockTexture>("color", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
+    RGResourceHandle depth = rg.create<MockTexture>("depth", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
+    RGResourceHandle light = rg.create<MockTexture>("light", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
 
     rg.addPass("GBuffer", RG_PASS_RASTER,
       [&](RenderGraph::PassBuilder& b) {
-        color = b.write(color, RG_USAGE_COLOR_ATTACHMENT);
-        depth = b.write(depth, RG_USAGE_DEPTH_ATTACHMENT);
+        color = b.write(color, RHI_USAGE_COLOR_ATTACHMENT);
+        depth = b.write(depth, RHI_USAGE_DEPTH_ATTACHMENT);
       },
       [](RGResources&, void*) {}
     );
 
     rg.addPass("Lighting", RG_PASS_RASTER,
       [&](RenderGraph::PassBuilder& b) {
-        b.read(color, RG_USAGE_SAMPLED_TEXTURE);
-        b.read(depth, RG_USAGE_SAMPLED_TEXTURE);
-        light = b.write(light, RG_USAGE_COLOR_ATTACHMENT);
+        b.read(color, RHI_USAGE_SAMPLED_TEXTURE);
+        b.read(depth, RHI_USAGE_SAMPLED_TEXTURE);
+        light = b.write(light, RHI_USAGE_COLOR_ATTACHMENT);
       },
       [](RGResources&, void*) {}
     );
 
     rg.addPass("Present", static_cast<RGPassFlags>(RG_PASS_RASTER | RG_PASS_NEVER_CULL),
-      [&](RenderGraph::PassBuilder& b) { b.read(light, RG_USAGE_SAMPLED_TEXTURE); },
+      [&](RenderGraph::PassBuilder& b) { b.read(light, RHI_USAGE_SAMPLED_TEXTURE); },
       [](RGResources&, void*) {}
     );
 

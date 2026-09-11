@@ -1,6 +1,7 @@
 #pragma once
 #include "../IRHIBackend.h"
 #include "VkGPUAllocator.h"
+#include "../../rg/RGTypes.h"
 
 // Vulkan backend - implements IRHIBackend and owns the VkGPUAllocator.
 // TO DO #7, #8: initialize with VkInstance, VkPhysicalDevice, VkDevice, VkQueue.
@@ -27,13 +28,12 @@ public:
     // TO DO: vkDestroyBuffer
   }
 
-  RHIMemoryRequirements getMemoryRequirements(void* gpuHandle, RGResourceKind kind) override {
+  RHIMemoryRequirements getMemoryRequirements(void* gpuHandle, RHIResourceKind kind) override {
     // TO DO #23: vkGetImageMemoryRequirements / vkGetBufferMemoryRequirements
-    // return .size and .alignment from VkMemoryRequirements
     return RHIMemoryRequirements{ 0, 1 };
   }
 
-  GPUMemoryBlock allocatePool(u64 size, RGMemoryType memoryType) override {
+  GPUMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) override {
     return mAllocator.allocate(size, memoryType);
   }
 
@@ -45,12 +45,12 @@ public:
     // TO DO #10: cast block.handle to VkDeviceMemory, call vkBindImageMemory / vkBindBufferMemory
   }
 
-  void emitBarrier(const RGBarrierInfo& info, void* cmdBuf) override {
-    // TO DO #11: translate RGBarrierInfo to VkImageMemoryBarrier2, call vkCmdPipelineBarrier2
+  void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) override {
+    // TO DO #11: translate RHIBarrierInfo to VkImageMemoryBarrier2, call vkCmdPipelineBarrier2
   }
 
-  void beginPass(void* cmdBuf) override {
-    // TO DO #12: vkCmdBeginRendering
+  void beginPass(void* cmdBuf, RHIPassType type) override {
+    // TO DO #12: vkCmdBeginRendering for RHI_PASS_RASTER; debug marker for compute/copy
   }
 
   void endPass(void* cmdBuf) override {
