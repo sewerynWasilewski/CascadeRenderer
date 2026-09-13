@@ -75,30 +75,20 @@ public:
 
   template<VIRTUALIZABLE_RESOURCE(T)>
   RGResourceHandle create(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, const typename T::Desc& desc) {
-    const u32 id = static_cast<u32>(mResources.size());
-    mResourceHandlers.push_back(RGResourceHandler(RG_RESOURCE_TRANSIENT, id, desc, T{}));
-
-    RGResourceData res{};
-    res.name           = name;
-    res.kind           = kind;
-    res.type           = RG_RESOURCE_TRANSIENT;
-    res.memory_type    = memoryType;
-    res.desc_index     = id;
-    res.version        = 0;
-    res.first_pass     = RG_INVALID_ID;
-    res.last_pass      = RG_INVALID_ID;
-    res.queue_mask     = 0;
-    res.physical_range = RGMemoryRange{};
-    mResources.push_back(res);
+    
+    const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_TRANSIENT, desc, T{}); 
 
     mGPUHandles.push_back(nullptr);
     return RGResourceHandle{ id, 0 };
   }
 
   template<VIRTUALIZABLE_RESOURCE(T)>
-  RGResourceHandle import(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, const typename T::Desc& desc) {
-    // TO DO #4: external resource import
-    return RGResourceHandle{};
+  RGResourceHandle import(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, const typename T::Desc& desc, T&& resource, void* gpuHandle) {
+    
+    const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_EXTERNAL, desc, resource); 
+
+    mGPUHandles.push_back(gpuHandle);
+    return RGResourceHandle{id, 0};
   }
 
   template<typename Setup, typename Execute>
@@ -544,6 +534,27 @@ private:
 
   IRHIBackend*          mBackend = nullptr;
   TransientResourcePool mPool;
+
+  template<VIRTUALIZABLE_RESOURCE(T)>
+  inline u32 registerResource(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, RGResourceType resType, const typename T::Desc& desc, T&& resource) { 
+    const u32 id = static_cast<u32>(mResources.size());
+    mResourceHandlers.push_back(RGResourceHandler(resType, id, desc, std::forward<T>(resource)));
+
+    RGResourceData res{};
+    res.name           = name;
+    res.kind           = kind;
+    res.type           = resType;
+    res.memory_type    = memoryType;
+    res.desc_index     = id;
+    res.version        = 0;
+    res.first_pass     = RG_INVALID_ID;
+    res.last_pass      = RG_INVALID_ID;
+    res.queue_mask     = 0;
+    res.physical_range = RGMemoryRange{};
+    mResources.push_back(res);
+
+    return id; 
+  }
 };
 
 // Read-only resource accessor passed into execute callbacks. Passes retrieve their concrete
