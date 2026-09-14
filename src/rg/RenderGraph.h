@@ -136,24 +136,48 @@ public:
     {
       mEdges.reserve(mUsages.size());
       std::unordered_map<u64, u32> writePass;   // key -> from_pass
+      std::unordered_map<u64, std::vector<u32>> readPass;
       std::unordered_map<u64, bool> wasRead;
       writePass.reserve(mUsages.size());
 
       for (const auto& u : mUsages) {
-        if (!u.is_write) continue;
-        writePass[(u64)u.resource_id << 32 | u.version] = u.pass_id;
+        if (!u.is_write) readPass[(u64)u.resource_id << 32 | u.version].push_back(u.pass_id);
+        else writePass[(u64)u.resource_id << 32 | u.version] = u.pass_id;
       }
 
       for (const auto& u : mUsages) {
-        if (u.is_write) continue;
-        const u64 key = (u64)u.resource_id << 32 | u.version;
-        auto it = writePass.find(key);
-        if (it != writePass.end()) {
-          mEdges.push_back({ it->second, u.pass_id, u.resource_id, u.version });
-          wasRead[key] = true;
+        if (u.is_write) {
+          if (u.version == 0) continue;
+
+          const u64 prevKey = (u64)u.resource_id << 32 | (u.version - 1);
+
+          // Write After Read Edge
+          auto id = readPass.find(prevKey);
+          if (id != readPass.end()) {
+            for (u32 pass_id : id->second) {
+              if (pass_id != u.pass_id)
+                mEdges.push_back({ pass_id, u.pass_id, u.resource_id, u.version });
+            }
+          }
+
+          // Write After Write Edge
+          auto it = writePass.find(prevKey);
+          if (it != writePass.end()) {
+            mEdges.push_back({ it->second, u.pass_id, u.resource_id, u.version });
+            wasRead[prevKey] = true;
+          }
+        } else {
+          // Read After Write Edge
+          const u64 key = (u64)u.resource_id << 32 | u.version;
+          auto it = writePass.find(key);
+          if (it != writePass.end()) {
+            mEdges.push_back({ it->second, u.pass_id, u.resource_id, u.version });
+            wasRead[key] = true;
+          }
         }
       }
 
+      // Terminal writes (no in-graph reader)
       for (auto& [key, fromPass] : writePass) {
         if (!wasRead.count(key))
           mEdges.push_back({ fromPass, RG_INVALID_ID,
