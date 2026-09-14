@@ -79,15 +79,17 @@ public:
     const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_TRANSIENT, desc, T{}); 
 
     mGPUHandles.push_back(nullptr);
+    mLastUsages.push_back(RHI_USAGE_NONE);
     return RGResourceHandle{ id, 0 };
   }
 
   template<VIRTUALIZABLE_RESOURCE(T)>
   RGResourceHandle import(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, const typename T::Desc& desc, T&& resource, void* gpuHandle) {
-    
-    const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_EXTERNAL, desc, resource); 
+
+    const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_EXTERNAL, desc, resource);
 
     mGPUHandles.push_back(gpuHandle);
+    mLastUsages.push_back(RHI_USAGE_NONE);  // caller is responsible for the real initial state
     return RGResourceHandle{id, 0};
   }
 
@@ -268,27 +270,49 @@ public:
       const u32 memType = static_cast<u32>(mResources[i].memory_type);
       auto& handler = mResourceHandlers[mResources[i].desc_index];
       if (mGPUHandles[i])
-        handler.releaseTo(mPool, mGPUHandles[i], memType);
-      mGPUHandles[i] = handler.acquireFrom(mPool, mBackend, memType);
+        handler.releaseTo(mPool, mGPUHandles[i], mLastUsages[i], memType);
+      const AcquiredHandle acquired = handler.acquireFrom(mPool, mBackend, memType);
+      mGPUHandles[i]  = acquired.handle;
+      mLastUsages[i]  = acquired.last_usage;
     }
 		
     // 6. Generate mBarriers from usage transitions
 		{
-			// O(U log U) — exclude usages from culled passes (global_index == RG_INVALID_ID):
-			// they sort to the end and would emit barriers with src/dst_pass = UINT32_MAX,
-			// corrupting dumpJSON output and crashing execute() when it indexes mSortedPasses.
+			// O(U log U)
 			std::vector<u32> order;
 			order.reserve(mUsages.size());
 			for (u32 i = 0; i < static_cast<u32>(mUsages.size()); i++) {
+        // exclude usages from culled passes
 				if (mPasses[mUsages[i].pass_id].global_index != RG_INVALID_ID)
 					order.push_back(i);
 			}
+      // sort by resource_id then by global_index
 			std::sort(order.begin(), order.end(), [&](u32 a, u32 b) {
 				if (mUsages[a].resource_id != mUsages[b].resource_id)
 					return mUsages[a].resource_id < mUsages[b].resource_id;
 				return mPasses[mUsages[a].pass_id].global_index <
 							mPasses[mUsages[b].pass_id].global_index;
 			});
+
+			// Emit barrier from UNDEFINED (RHI_USAGE_NONE) into the first recorded usage per resource. - Covers freshly created handles
+			{
+				u32 prevResourceId = RG_INVALID_ID;
+				for (u32 idx : order) {
+					const RGResourceUsage& u = mUsages[idx];
+					if (u.resource_id == prevResourceId) continue;
+					prevResourceId = u.resource_id;
+					const RHIUsage entryState = mLastUsages[u.resource_id];
+					if (entryState == u.usage) continue;
+					mBarriers.push_back({
+						u.resource_id,
+						static_cast<u32>(entryState),
+						static_cast<u32>(u.usage),
+						RG_INVALID_ID,
+						mPasses[u.pass_id].global_index,
+						RHI_BARRIER_TRANSITION
+					});
+				}
+			}
 
 			// O(U) linear walk over consecutive pairs
 			for (size_t i = 0; i + 1 < order.size(); i++) {
@@ -300,14 +324,14 @@ public:
 
 				mBarriers.push_back({
 					curr.resource_id,
-					curr.usage,
-					next.usage,
+					static_cast<u32>(curr.usage),
+					static_cast<u32>(next.usage),
 					mPasses[curr.pass_id].global_index,
 					mPasses[next.pass_id].global_index,
 					RHI_BARRIER_TRANSITION
 				});
 			}
-		} 
+		}
   }
 
   // TO DO #5, #23: offline placement pass - runs after compile().
@@ -509,7 +533,7 @@ public:
       for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
         if (mResources[i].type != RG_RESOURCE_TRANSIENT) continue;
         if (!mGPUHandles[i]) continue;
-        mResourceHandlers[mResources[i].desc_index].releaseTo(mPool, mGPUHandles[i], static_cast<u32>(mResources[i].memory_type));
+        mResourceHandlers[mResources[i].desc_index].releaseTo(mPool, mGPUHandles[i], mLastUsages[i], static_cast<u32>(mResources[i].memory_type));
       }
     }
     mPasses.clear();
@@ -521,6 +545,7 @@ public:
     mResourceHandlers.clear();
     mExecutors.clear();
     mGPUHandles.clear();
+    mLastUsages.clear();
   }
 
   void destroy() {
@@ -548,6 +573,7 @@ private:
   std::vector<RGResourceHandler>              mResourceHandlers;
   std::vector<std::unique_ptr<RGPassExecute>> mExecutors;
   std::vector<void*>                          mGPUHandles;  // parallel to mResources
+  std::vector<RHIUsage>                       mLastUsages;  // last GPU state per handle
 
   // Persistent (survive reset, freed in destroy)
   std::vector<GPUMemoryBlock> mMemoryPools;

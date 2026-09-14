@@ -7,6 +7,11 @@
 
 struct IRHIBackend;
 
+struct AcquiredHandle {
+  void*    handle;
+  RHIUsage last_usage;
+};
+
 // Freelist pool for transient GPU resources. Sits below the render graph — the graph
 // acquires handles at compile() and returns them at reset(). Handles are reused across
 // frames as long as their type, descriptor, and memory type all match.
@@ -16,19 +21,17 @@ class TransientResourcePool {
 public:
   void setBackend(IRHIBackend* backend) { mBackend = backend; }
 
-  // Returns a cached handle matching (typeId, descHash, memType), or nullptr if empty.
-  void* tryAcquire(u64 typeId, u64 descHash, u32 memType) {
+  AcquiredHandle tryAcquire(u64 typeId, u64 descHash, u32 memType) {
     auto it = mFreeList.find({typeId, descHash, memType});
-    if (it == mFreeList.end() || it->second.empty()) return nullptr;
-    void* h = it->second.back().handle;
+    if (it == mFreeList.end() || it->second.empty()) return {nullptr, RHI_USAGE_NONE};
+    AcquiredHandle result = {it->second.back().handle, it->second.back().last_usage};
     it->second.pop_back();
-    return h;
+    return result;
   }
 
-  // Returns a handle to the freelist. destroyFn is stored so flush() can clean up.
-  void release(u64 typeId, u64 descHash, u32 memType, void* handle,
+  void release(u64 typeId, u64 descHash, u32 memType, void* handle, RHIUsage last_usage,
                std::function<void(IRHIBackend*, void*)> destroyFn) {
-    mFreeList[{typeId, descHash, memType}].push_back({handle, std::move(destroyFn)});
+    mFreeList[{typeId, descHash, memType}].push_back({handle, last_usage, std::move(destroyFn)});
   }
 
   // Destroys all free handles for one memory type.
@@ -73,7 +76,8 @@ private:
   };
 
   struct Entry {
-    void* handle;
+    void*    handle;
+    RHIUsage last_usage;
     std::function<void(IRHIBackend*, void*)> destroyFn;
   };
 
