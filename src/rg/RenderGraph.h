@@ -134,6 +134,15 @@ public:
 #endif
 
   void compile() {
+    // Reset per-resource lifetime fields so repeated compile() calls produce correct results.
+    for (auto& r : mResources) {
+      r.first_pass = RG_INVALID_ID;
+      r.last_pass  = RG_INVALID_ID;
+    }
+    mEdges.clear();
+    mSortedPasses.clear();
+    mBarriers.clear();
+
     // 1. Build mEdges from matching (resource_id, version) write -> read pairs.
     {
       mEdges.reserve(mUsages.size());
@@ -332,6 +341,7 @@ public:
 				});
 			}
 		}
+    mCompiled = true;
   }
 
   // TO DO #5, #23: offline placement pass - runs after compile().
@@ -546,6 +556,7 @@ public:
     mExecutors.clear();
     mGPUHandles.clear();
     mLastUsages.clear();
+    mCompiled = false;
   }
 
   void destroy() {
@@ -574,6 +585,7 @@ private:
   std::vector<std::unique_ptr<RGPassExecute>> mExecutors;
   std::vector<void*>                          mGPUHandles;  // parallel to mResources
   std::vector<RHIUsage>                       mLastUsages;  // last GPU state per handle
+  bool                                        mCompiled = false;
 
   // Persistent (survive reset, freed in destroy)
   std::vector<GPUMemoryBlock> mMemoryPools;

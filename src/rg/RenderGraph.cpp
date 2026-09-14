@@ -2,7 +2,10 @@
 
 void RenderGraph::execute(void* cmdBuf) {
   assert(mBackend);
+  assert(mCompiled && "call compile() before execute()");
 
+  // TO DO: Loop can be optimized, currently time complexity is O(P*B)
+  // TO DO: Currently execute doesnt support cross-queue barrier (semaphores), later needs implemntation
   for (u32 gi = 0; gi < static_cast<u32>(mSortedPasses.size()); gi++) {
     const u32 passId       = mSortedPasses[gi];
     const RGPassData& pass = mPasses[passId];
