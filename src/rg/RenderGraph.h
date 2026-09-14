@@ -227,7 +227,7 @@ public:
     // O(E + P)
     {
       for (const RGEdge& edge : mEdges) {
-        if (edge.to_pass != RG_INVALID_ID)
+        if (edge.to_pass != RG_INVALID_ID || mResources[edge.resource_id].type == RG_RESOURCE_EXTERNAL)
           mPasses[edge.from_pass].ref_count++;
       }
       // Mark culled passes by resetting their global_index to RG_INVALID_ID.
