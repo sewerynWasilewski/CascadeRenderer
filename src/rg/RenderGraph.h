@@ -86,7 +86,10 @@ public:
   template<VIRTUALIZABLE_RESOURCE(T)>
   RGResourceHandle import(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, const typename T::Desc& desc, T&& resource, void* gpuHandle) {
 
-    const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_EXTERNAL, desc, resource);
+    // forward, not a bare copy of the named parameter: registerResource deduces T from
+    // this argument, and a named `resource` is an lvalue, which deduces T = T& and
+    // makes `typename T::Desc` ill-formed.
+    const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_EXTERNAL, desc, std::forward<T>(resource));
 
     mGPUHandles.push_back(gpuHandle);
     mLastUsages.push_back(RHI_USAGE_NONE);  // caller is responsible for the real initial state

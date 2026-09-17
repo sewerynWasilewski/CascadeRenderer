@@ -1,5 +1,6 @@
 add_executable(rg_tests
     test_compile.cpp
+    test_renderer_graph.cpp
 )
 
 target_link_libraries(rg_tests PRIVATE renderer)

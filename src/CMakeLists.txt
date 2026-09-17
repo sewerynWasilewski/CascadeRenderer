@@ -1,4 +1,5 @@
 set(RENDERER_SOURCES
+    renderer/camera.cpp
     renderer/renderer.cpp
     rg/RenderGraph.cpp
 )
@@ -20,3 +21,8 @@ if(Vulkan_FOUND)
 endif()
 
 target_link_libraries(renderer PUBLIC glm::glm)
+
+target_compile_definitions(renderer PUBLIC
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    GLM_FORCE_RADIANS
+)
