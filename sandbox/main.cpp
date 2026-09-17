@@ -1,5 +1,6 @@
 #include <cstdio>
 #include "rg/RenderGraph.h"
+#include "renderer/model_loader.h"
 
 struct MockBackend final : IRHIBackend {
   void* createImage(const RHITextureDesc&)            override { printf("  [backend] createImage\n");  return reinterpret_cast<void*>(0xDEAD); }
@@ -26,7 +27,26 @@ struct MockTexture {
   }
 };
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc > 1) {
+    Scene scene;
+    const ModelLoadResult r = loadOBJ(argv[1], scene);
+    if (!r.ok) {
+      printf("[model] load failed: %s\n", r.error.c_str());
+      return 1;
+    }
+    printf("[model] %s\n", argv[1]);
+    printf("  meshes:   %u\n", static_cast<unsigned>(r.meshCount));
+    printf("  vertices: %u\n", static_cast<unsigned>(r.vertexCount));
+    printf("  indices:  %u\n", static_cast<unsigned>(r.indexCount));
+    for (const Mesh& m : scene.meshes) {
+      printf("    '%s' firstIndex=%u indexCount=%u\n",
+             m.name.c_str(), static_cast<unsigned>(m.firstIndex),
+             static_cast<unsigned>(m.indexCount));
+    }
+    return 0;
+  }
+
   MockBackend backend;
   RenderGraph rg;
   rg.setBackend(&backend);

@@ -16,6 +16,14 @@ struct DirectionalLight {
   glm::vec3 directionToLight() const { return -glm::normalize(direction); }
 };
 
+struct Vertex {
+  glm::vec3 position;
+  glm::vec3 normal;
+  glm::vec2 uv;
+};
+
+static_assert(sizeof(Vertex) == 32, "Vertex layout must stay 32 bytes");
+
 struct Mesh {
   std::string name;
   std::string sourcePath; // file the loader will read
@@ -30,6 +38,10 @@ struct Mesh {
 struct Scene {
   PerspectiveCamera          camera;
   DirectionalLight           sun;
+
+  std::vector<Vertex>        vertices;
+  std::vector<u32>           indices;
+
   std::vector<Mesh>          meshes;
   glm::vec3                  ambient{0.03f, 0.03f, 0.04f};
 };

@@ -12,6 +12,7 @@ add_subdirectory(vendor/glfw)
 add_subdirectory(vendor/glm)
 
 set(VMA_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/vma/include)
+set(TINYOBJLOADER_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 
 find_package(Vulkan)
 

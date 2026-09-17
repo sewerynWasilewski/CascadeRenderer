@@ -1,5 +1,6 @@
 set(RENDERER_SOURCES
     renderer/camera.cpp
+    renderer/model_loader.cpp
     renderer/renderer.cpp
     rg/RenderGraph.cpp
 )
@@ -13,6 +14,8 @@ add_library(renderer STATIC ${RENDERER_SOURCES})
 target_include_directories(renderer PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+target_include_directories(renderer PRIVATE ${TINYOBJLOADER_INCLUDE_DIR})
 
 if(Vulkan_FOUND)
     target_include_directories(renderer PUBLIC ${VMA_INCLUDE_DIR})
