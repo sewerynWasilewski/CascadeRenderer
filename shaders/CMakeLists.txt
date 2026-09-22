@@ -6,6 +6,9 @@ endif()
 set(SHADER_SOURCES
     gbuffer.vert
     gbuffer.frag
+    fullscreen.vert
+    lighting.frag
+    present.frag
 )
 
 set(SHADER_COMPILE_OPTIONS --target-env=vulkan1.1 -O)
