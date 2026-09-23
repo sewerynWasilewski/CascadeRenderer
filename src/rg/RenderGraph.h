@@ -50,6 +50,12 @@ public:
     // Use the returned handle for any subsequent reads in other passes.
     RGResourceHandle write(RGResourceHandle handle, RHIUsage usage) {
       assert(handle.valid());
+      // Feedback loops (read+write or write+write of the same resource in one pass) are unsupported.
+      // Split into two passes with an intermediate transient resource instead.
+      const u32 first = mRG.mPasses[mPassId].first_usage;
+      const u32 end   = static_cast<u32>(mRG.mUsages.size());
+      for (u32 i = first; i < end; i++)
+        assert(mRG.mUsages[i].resource_id != handle.id && "feedback loop: resource used twice in one pass");
       RGResourceData& res = mRG.mResources[handle.id];
       res.queue_mask |= rhi_queue_bit(mRG.mPasses[mPassId].queue);
       res.version++;
@@ -59,6 +65,12 @@ public:
 
     RGResourceHandle read(RGResourceHandle handle, RHIUsage usage) {
       assert(handle.valid());
+      // Catch write-then-read feedback loop regardless of declaration order.
+      const u32 first = mRG.mPasses[mPassId].first_usage;
+      const u32 end   = static_cast<u32>(mRG.mUsages.size());
+      for (u32 i = first; i < end; i++)
+        assert(!(mRG.mUsages[i].resource_id == handle.id && mRG.mUsages[i].is_write)
+               && "feedback loop: cannot read a resource already written in this pass");
       RGResourceData& res = mRG.mResources[handle.id];
       res.queue_mask |= rhi_queue_bit(mRG.mPasses[mPassId].queue);
       mRG.mUsages.push_back({ mPassId, handle.id, handle.version, usage, false });
@@ -295,7 +307,9 @@ public:
 				if (mPasses[mUsages[i].pass_id].global_index != RG_INVALID_ID)
 					order.push_back(i);
 			}
-      // sort by resource_id then by global_index
+      // Sort by (resource_id, global_index). Feedback loops are blocked in PassBuilder::read/write,
+      // so each resource appears at most once per pass — global_index values within one resource
+      // group are always distinct and the sort is fully determined.
 			std::sort(order.begin(), order.end(), [&](u32 a, u32 b) {
 				if (mUsages[a].resource_id != mUsages[b].resource_id)
 					return mUsages[a].resource_id < mUsages[b].resource_id;
