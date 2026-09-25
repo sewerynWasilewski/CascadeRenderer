@@ -50,6 +50,8 @@ public:
     // Use the returned handle for any subsequent reads in other passes.
     RGResourceHandle write(RGResourceHandle handle, RHIUsage usage) {
       assert(handle.valid());
+      assert(handle.epoch == mRG.mEpoch        && "stale handle: used across reset()");
+      assert(handle.id < mRG.mResources.size() && "stale handle: id out of range");
       // Feedback loops (read+write or write+write of the same resource in one pass) are unsupported.
       // Split into two passes with an intermediate transient resource instead.
       const u32 first = mRG.mPasses[mPassId].first_usage;
@@ -65,6 +67,8 @@ public:
 
     RGResourceHandle read(RGResourceHandle handle, RHIUsage usage) {
       assert(handle.valid());
+      assert(handle.epoch == mRG.mEpoch        && "stale handle: used across reset()");
+      assert(handle.id < mRG.mResources.size() && "stale handle: id out of range");
       // Catch write-then-read feedback loop regardless of declaration order.
       const u32 first = mRG.mPasses[mPassId].first_usage;
       const u32 end   = static_cast<u32>(mRG.mUsages.size());
@@ -92,17 +96,17 @@ public:
 
     mGPUHandles.push_back(nullptr);
     mLastUsages.push_back(RHI_USAGE_NONE);
-    return RGResourceHandle{ id, 0 };
+    return RGResourceHandle{ id, 0, mEpoch };
   }
 
   template<VIRTUALIZABLE_RESOURCE(T)>
   RGResourceHandle import(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, const typename T::Desc& desc, T&& resource, void* gpuHandle) {
-
+    assert(gpuHandle != nullptr && "import: gpuHandle must not be null");
     const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_EXTERNAL, desc, resource);
 
     mGPUHandles.push_back(gpuHandle);
     mLastUsages.push_back(RHI_USAGE_NONE);  // caller is responsible for the real initial state
-    return RGResourceHandle{id, 0};
+    return RGResourceHandle{ id, 0, mEpoch };
   }
 
   template<typename Setup, typename Execute>
@@ -136,6 +140,8 @@ public:
 
   bool isValid(RGResourceHandle handle) const {
     if (!handle.valid()) return false;
+    assert(handle.epoch == mEpoch       && "stale handle: used across reset()");
+    assert(handle.id < mResources.size() && "stale handle: id out of range");
     return mResources[handle.id].version == handle.version;
   }
 
@@ -571,6 +577,7 @@ public:
     mGPUHandles.clear();
     mLastUsages.clear();
     mCompiled = false;
+    mEpoch++;
   }
 
   void destroy() {
@@ -600,6 +607,7 @@ private:
   std::vector<void*>                          mGPUHandles;  // parallel to mResources
   std::vector<RHIUsage>                       mLastUsages;  // last GPU state per handle
   bool                                        mCompiled = false;
+  u32                                         mEpoch    = 0; // detects cross-frame handle reuse
 
   // Persistent (survive reset, freed in destroy)
   std::vector<GPUMemoryBlock> mMemoryPools;
@@ -648,6 +656,9 @@ public:
 
   template<VIRTUALIZABLE_RESOURCE(T)>
   T& get(RGResourceHandle handle) {
+    assert(handle.valid()                       && "invalid handle");
+    assert(handle.epoch == mRG.mEpoch           && "stale handle: used across reset()");
+    assert(handle.id < mRG.mResources.size()    && "stale handle: id out of range");
     return mRG.mResourceHandlers[mRG.mResources[handle.id].desc_index].get<T>();
   }
 

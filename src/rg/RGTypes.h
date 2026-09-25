@@ -12,6 +12,7 @@ struct RGPassHandle {
 struct RGResourceHandle {
   u32  id      = RG_INVALID_ID;
   u32  version = 0;
+  u32  epoch   = 0;
   bool valid() const { return id != RG_INVALID_ID; }
 };
 
