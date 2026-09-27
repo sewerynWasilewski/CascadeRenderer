@@ -656,9 +656,10 @@ public:
 
   template<VIRTUALIZABLE_RESOURCE(T)>
   T& get(RGResourceHandle handle) {
-    assert(handle.valid()                       && "invalid handle");
-    assert(handle.epoch == mRG.mEpoch           && "stale handle: used across reset()");
-    assert(handle.id < mRG.mResources.size()    && "stale handle: id out of range");
+    assert(handle.valid()                                             && "invalid handle");
+    assert(handle.epoch == mRG.mEpoch                                && "stale handle: used across reset()");
+    assert(handle.id < mRG.mResources.size()                         && "stale handle: id out of range");
+    assert(mRG.mResources[handle.id].first_pass != RG_INVALID_ID     && "resource was culled this frame");
     return mRG.mResourceHandlers[mRG.mResources[handle.id].desc_index].get<T>();
   }
 
