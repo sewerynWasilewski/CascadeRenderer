@@ -1,8 +1,8 @@
 #pragma once
-#include "../gpu_types.h"
+#include "../rhi_types.h"
 
 // Backend interface the render graph calls into for all GPU operations.
-// The concrete implementation (e.g. VkRHIBackend) owns its IGPUAllocator internally.
+// The concrete implementation (e.g. VkRHIBackend) owns its IRHIAllocator internally.
 // The render graph stores one IRHIBackend* set via RenderGraph::setBackend().
 struct IRHIBackend {
   IRHIBackend() = default;
@@ -17,12 +17,12 @@ struct IRHIBackend {
 
   virtual RHIMemoryRequirements getMemoryRequirements(void* gpuHandle, RHIResourceKind kind) = 0;
 
-  virtual GPUMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) = 0;
-  virtual void           freePool(GPUMemoryBlock block) = 0;
+  virtual RHIMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) = 0;
+  virtual void           freePool(RHIMemoryBlock block) = 0;
 
   // Bind a GPU resource handle to a memory block at a given offset - called by allocate().
   // gpuHandle is VkImage/VkBuffer (or equivalent) cast to void*.
-  virtual void bindMemory(void* gpuHandle, GPUMemoryBlock block, u64 offset) = 0;
+  virtual void bindMemory(void* gpuHandle, RHIMemoryBlock block, u64 offset) = 0;
 
   // Emit a pipeline barrier before a pass - called by execute(). See issue #11.
   virtual void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) = 0;

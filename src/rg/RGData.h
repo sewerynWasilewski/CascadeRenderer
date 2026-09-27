@@ -1,9 +1,9 @@
 #pragma once
 #include <cassert>
 #include "RGTypes.h"
-#include "../rhi/IGPUAllocator.h"
+#include "../rhi/IRHIAllocator.h"
 
-// A slice within a GPUMemoryBlock. pool_id indexes into RenderGraph::mMemoryPools.
+// A slice within a RHIMemoryBlock. pool_id indexes into RenderGraph::mMemoryPools.
 struct RGMemoryRange {
   u32 pool_id;
   u64 offset;
@@ -12,7 +12,7 @@ struct RGMemoryRange {
 
 // Stamps out a RGMemoryRange from a pre-planned offset within a block.
 // alignment is validated here - plan() is responsible for producing aligned offsets.
-inline RGMemoryRange rg_suballocate(const GPUMemoryBlock& block, u64 offset, u64 size, u64 alignment) {
+inline RGMemoryRange rg_suballocate(const RHIMemoryBlock& block, u64 offset, u64 size, u64 alignment) {
   assert(alignment > 0 && (offset % alignment) == 0 && "rg_suballocate: offset violates alignment");
   return RGMemoryRange{ block.id, offset, size };
 }

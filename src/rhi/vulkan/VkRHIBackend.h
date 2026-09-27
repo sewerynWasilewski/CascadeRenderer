@@ -1,9 +1,9 @@
 #pragma once
 #include "../IRHIBackend.h"
-#include "VkGPUAllocator.h"
+#include "VkRHIAllocator.h"
 #include "../../rg/RGTypes.h"
 
-// Vulkan backend - implements IRHIBackend and owns the VkGPUAllocator.
+// Vulkan backend - implements IRHIBackend and owns the VkRHIAllocator.
 // TO DO #7, #8: initialize with VkInstance, VkPhysicalDevice, VkDevice, VkQueue.
 class VkRHIBackend final : public IRHIBackend {
 public:
@@ -33,15 +33,15 @@ public:
     return RHIMemoryRequirements{ 0, 1 };
   }
 
-  GPUMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) override {
+  RHIMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) override {
     return mAllocator.allocate(size, memoryType);
   }
 
-  void freePool(GPUMemoryBlock block) override {
+  void freePool(RHIMemoryBlock block) override {
     mAllocator.free(block);
   }
 
-  void bindMemory(void* gpuHandle, GPUMemoryBlock block, u64 offset) override {
+  void bindMemory(void* gpuHandle, RHIMemoryBlock block, u64 offset) override {
     // TO DO #10: cast block.handle to VkDeviceMemory, call vkBindImageMemory / vkBindBufferMemory
   }
 
@@ -60,5 +60,5 @@ public:
   }
 
 private:
-  VkGPUAllocator mAllocator;
+  VkRHIAllocator mAllocator;
 };

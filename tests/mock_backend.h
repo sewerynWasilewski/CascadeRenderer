@@ -7,9 +7,9 @@ struct MockBackend : IRHIBackend {
   void  destroyImage(void*)                                        override {}
   void  destroyBuffer(void*)                                       override {}
   RHIMemoryRequirements getMemoryRequirements(void*, RHIResourceKind) override { return {1024, 256}; }
-  GPUMemoryBlock allocatePool(u64, RHIMemoryType)                  override { return {}; }
-  void           freePool(GPUMemoryBlock)                          override {}
-  void           bindMemory(void*, GPUMemoryBlock, u64)            override {}
+  RHIMemoryBlock allocatePool(u64, RHIMemoryType)                  override { return {}; }
+  void           freePool(RHIMemoryBlock)                          override {}
+  void           bindMemory(void*, RHIMemoryBlock, u64)            override {}
   void           emitBarrier(const RHIBarrierInfo&, void*)         override {}
   void           beginPass(void*, RHIPassType)                     override {}
   void           endPass(void*)                                    override {}

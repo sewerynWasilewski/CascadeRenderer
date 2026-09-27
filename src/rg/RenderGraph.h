@@ -495,9 +495,9 @@ public:
     //    - call mPool.flushMemoryType(memType) BEFORE rebinding - vkBindImageMemory is permanent,
     //      so any handle the pool cached from a previous frame is bound to a stale offset and
     //      cannot be reused. Flushing forces fresh creation via acquireFrom() on the next compile().
-    //    - IGPUAllocator::free + reallocate with 1.5x slack (mMemoryPools)
+    //    - IRHIAllocator::free + reallocate with 1.5x slack (mMemoryPools)
     // 3. For each entry in plan: vkBindImageMemory / vkBindBufferMemory at planned offset
-    // 4. Set physical_range on each RGResourceData via IGPUAllocator::suballocate()
+    // 4. Set physical_range on each RGResourceData via IRHIAllocator::suballocate()
     // 5. Generate mBarriers for aliasing - resources sharing the same pool_id and overlapping byte range
     //    (TransientResourcePool is not involved here - aliasing is a plan() decision, not a handle decision)
   }
@@ -610,7 +610,7 @@ private:
   u32                                         mEpoch    = 0; // detects cross-frame handle reuse
 
   // Persistent (survive reset, freed in destroy)
-  std::vector<GPUMemoryBlock> mMemoryPools;
+  std::vector<RHIMemoryBlock> mMemoryPools;
 
   std::array<u64,  MAX_RHI_MEMORY_TYPE_INDEX + 1> mPoolSizes        = {};
   std::array<u64,  MAX_RHI_MEMORY_TYPE_INDEX + 1> mPlanHashes       = {};

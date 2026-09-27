@@ -3,7 +3,7 @@
 #include <vector>
 #include <functional>
 #include <cassert>
-#include "../gpu_types.h"
+#include "../rhi_types.h"
 
 struct IRHIBackend;
 

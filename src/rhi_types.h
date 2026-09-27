@@ -6,8 +6,8 @@ using u64 = uint64_t;
 
 constexpr u32 RG_INVALID_ID = UINT32_MAX;
 
-// Opaque handle to a raw GPU memory block allocated by IGPUAllocator.
-struct GPUMemoryBlock {
+// Opaque handle to a raw GPU memory block allocated by IRHIAllocator.
+struct RHIMemoryBlock {
   u32   id;
   u64   size;
   void* handle;
