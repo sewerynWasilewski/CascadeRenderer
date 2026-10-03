@@ -42,8 +42,8 @@ private:
     u64 typeId   = 0;
     u64 descHash = 0;  // pool key: FNV-1a of T::Desc bytes
     virtual ~SlotBase() = default;
-    virtual void*          createGPUResource(IRHIBackend* backend) const = 0;
-    virtual void           destroyGPUResource(IRHIBackend* backend, void* handle) const = 0;
+    virtual void*          createRHIHandle(IRHIBackend* backend) const = 0;
+    virtual void           destroyRHIHandle(IRHIBackend* backend, void* handle) const = 0;
     virtual AcquiredHandle acquireFrom(TransientResourcePool& pool, IRHIBackend* backend, u32 memType) const = 0;
     virtual void           releaseTo(TransientResourcePool& pool, void* handle, RHIUsage last_usage, u32 memType) const = 0;
   };
@@ -56,28 +56,28 @@ private:
         descHash = fnv1a(&d, sizeof(d));
       }
 
-    void* createGPUResource(IRHIBackend* backend) const override {
-      return T::createGPU(desc, backend);
+    void* createRHIHandle(IRHIBackend* backend) const override {
+      return T::createRHIHandle(desc, backend);
     }
-    void destroyGPUResource(IRHIBackend* backend, void* handle) const override {
-      T::destroyGPU(desc, backend, handle);
+    void destroyRHIHandle(IRHIBackend* backend, void* handle) const override {
+      T::destroyRHIHandle(desc, backend, handle);
     }
     AcquiredHandle acquireFrom(TransientResourcePool& pool, IRHIBackend* backend, u32 memType) const override {
       AcquiredHandle acquired = pool.tryAcquire(typeId, descHash, memType);
       if (acquired.handle) return acquired;
-      return {T::createGPU(desc, backend), RHI_USAGE_NONE};
+      return {T::createRHIHandle(desc, backend), RHI_USAGE_NONE};
     }
     void releaseTo(TransientResourcePool& pool, void* handle, RHIUsage last_usage, u32 memType) const override {
       pool.release(typeId, descHash, memType, handle, last_usage,
-        [d = desc](IRHIBackend* be, void* h) { T::destroyGPU(d, be, h); });
+        [d = desc](IRHIBackend* be, void* h) { T::destroyRHIHandle(d, be, h); });
     }
 
     typename T::Desc desc;
     T                resource;
   };
 
-  void* createGPUResource(IRHIBackend* backend)                { return mSlot->createGPUResource(backend); }
-  void  destroyGPUResource(IRHIBackend* backend, void* handle) { mSlot->destroyGPUResource(backend, handle); }
+  void* createRHIHandle(IRHIBackend* backend)                { return mSlot->createRHIHandle(backend); }
+  void  destroyRHIHandle(IRHIBackend* backend, void* handle) { mSlot->destroyRHIHandle(backend, handle); }
   AcquiredHandle acquireFrom(TransientResourcePool& pool, IRHIBackend* backend, u32 memType) const { return mSlot->acquireFrom(pool, backend, memType); }
   void           releaseTo(TransientResourcePool& pool, void* handle, RHIUsage last_usage, u32 memType) const { mSlot->releaseTo(pool, handle, last_usage, memType); }
 

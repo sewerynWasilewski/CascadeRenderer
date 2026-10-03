@@ -10,8 +10,8 @@ concept Virtualizable =
   std::is_default_constructible_v<T> &&
   std::is_move_constructible_v<T> &&
   requires(const typename T::Desc& d, IRHIBackend* b, void* h) {
-    { T::createGPU(d, b)     } -> std::same_as<void*>;
-    { T::destroyGPU(d, b, h) } -> std::same_as<void>;
+    { T::createRHIHandle(d, b)     } -> std::same_as<void*>;
+    { T::destroyRHIHandle(d, b, h) } -> std::same_as<void>;
   };
 
 #define VIRTUALIZABLE_RESOURCE(T) Virtualizable T
