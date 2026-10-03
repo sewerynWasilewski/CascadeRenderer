@@ -24,7 +24,7 @@ public:
   RenderGraph(const RenderGraph&) = delete;
   RenderGraph(RenderGraph&&) noexcept = delete;
 
-  void setBackend(IRHIBackend* backend) { mBackend = backend; mPool.setBackend(backend); }
+  void setBackend(IRHIBackend* backend) { mBackend = backend; mResourcePool.setBackend(backend); }
 
   RenderGraph& operator=(const RenderGraph&) = delete;
   RenderGraph& operator=(RenderGraph&&) noexcept = delete;
@@ -97,14 +97,14 @@ private:
   u32                                         mEpoch    = 0; // detects cross-frame handle reuse
 
   // Persistent (survive reset, freed in destroy)
-  std::vector<RHIMemoryBlock> mMemoryPools;
+  std::array<RHIMemoryBlock, MAX_RHI_MEMORY_TYPE_INDEX + 1> mMemoryPools = {};
 
-  std::array<u64,  MAX_RHI_MEMORY_TYPE_INDEX + 1> mPoolSizes        = {};
+  std::array<u64,  MAX_RHI_MEMORY_TYPE_INDEX + 1> mPlannedPoolSizes        = {};
   std::array<u64,  MAX_RHI_MEMORY_TYPE_INDEX + 1> mPlanHashes       = {};
   std::array<bool, MAX_RHI_MEMORY_TYPE_INDEX + 1> mShouldReallocate = {};
 
   IRHIBackend*          mBackend = nullptr;
-  TransientResourcePool mPool;
+  TransientResourcePool mResourcePool;
 
   template<VIRTUALIZABLE_RESOURCE(T)>
   inline u32 registerResource(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, RGResourceType resType, const typename T::Desc& desc, T&& resource); 

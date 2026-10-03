@@ -1,5 +1,7 @@
 #include "RenderGraph.h"
 
+static constexpr float kMemorySlackMul = 1.5f;
+
 RGResourceHandle RenderGraph::PassBuilder::write(RGResourceHandle handle, RHIUsage usage) {
   assert(handle.valid());
   assert(handle.epoch == mRG.mEpoch        && "stale handle: used across reset()");
@@ -186,8 +188,8 @@ void RenderGraph::compile() {
     const u32 memType = static_cast<u32>(mResources[i].memory_type);
     auto& handler = mResourceHandlers[mResources[i].desc_index];
     if (mGPUHandles[i])
-      handler.releaseTo(mPool, mGPUHandles[i], mLastUsages[i], memType);
-    const AcquiredHandle acquired = handler.acquireFrom(mPool, mBackend, memType);
+      handler.releaseTo(mResourcePool, mGPUHandles[i], mLastUsages[i], memType);
+    const AcquiredHandle acquired = handler.acquireFrom(mResourcePool, mBackend, memType);
     mGPUHandles[i]  = acquired.handle;
     mLastUsages[i]  = acquired.last_usage;
   }
@@ -365,7 +367,7 @@ void RenderGraph::plan() {
       feed(&key, sizeof(key));
     }
 
-    mPoolSizes[memType] = pool_size;
+    mPlannedPoolSizes[memType] = pool_size;
 
     if (mPlanHashes[memType] != hash) {
       mShouldReallocate[memType] = true;
@@ -378,17 +380,76 @@ void RenderGraph::plan() {
 
 void RenderGraph::allocate() {
   assert(mBackend);
-  // TO DO #5: full implementation - see plan() above and issue #23 for the three-level cache.
-  // 1. If planHash matches cached hash: return early
-  // 2. Per RHIMemoryType where mShouldReallocate[memType] is true:
-  //    - call mPool.flushMemoryType(memType) BEFORE rebinding - vkBindImageMemory is permanent,
-  //      so any handle the pool cached from a previous frame is bound to a stale offset and
-  //      cannot be reused. Flushing forces fresh creation via acquireFrom() on the next compile().
-  //    - IRHIAllocator::free + reallocate with 1.5x slack (mMemoryPools)
-  // 3. For each entry in plan: vkBindImageMemory / vkBindBufferMemory at planned offset
-  // 4. Set physical_range on each RGResourceData via IRHIAllocator::suballocate()
-  // 5. Generate mBarriers for aliasing - resources sharing the same pool_id and overlapping byte range
-  //    (TransientResourcePool is not involved here - aliasing is a plan() decision, not a handle decision)
+
+  std::vector<RHIUsage> firstUsageOf(mResources.size(), RHI_USAGE_NONE);
+  for (const auto& u : mUsages) {
+    if (mPasses[u.pass_id].global_index == mResources[u.resource_id].first_pass)
+      firstUsageOf[u.resource_id] = u.usage;
+  }
+
+  for (u32 memType = 0; memType <= MAX_RHI_MEMORY_TYPE_INDEX; memType++) {
+    if (!mShouldReallocate[memType]) continue; 
+
+    mResourcePool.flushMemoryType(memType);
+
+    if(mPlannedPoolSizes[memType] > mMemoryPools[memType].size){
+      if (mMemoryPools[memType].size > 0) 
+        mBackend->freePool(mMemoryPools[memType]);
+      mMemoryPools[memType] = mBackend->allocatePool(mPlannedPoolSizes[memType] * kMemorySlackMul, static_cast<RHIMemoryType>(memType));
+    }
+
+    const u32 numResources = static_cast<u32>(mResources.size()); 
+    for(u32 i = 0; i < numResources; i++){ 
+      if (mResources[i].type != RG_RESOURCE_TRANSIENT) continue;
+      if (mResources[i].first_pass == RG_INVALID_ID) continue;
+      if (mResources[i].memory_type != static_cast<RHIMemoryType>(memType)) continue;
+
+      mResourceHandlers[mResources[i].desc_index].destroyRHIHandle(mBackend, mGPUHandles[i]); 
+      mGPUHandles[i] = mResourceHandlers[mResources[i].desc_index].createRHIHandle(mBackend); 
+      mBackend->bindMemory(mGPUHandles[i], mMemoryPools[memType], mResources[i].physical_range.offset); 
+    }
+
+    // Generate Aliasing Barriers
+
+    for (u32 a = 0; a < numResources; a++) {
+      if (mResources[a].type != RG_RESOURCE_TRANSIENT) continue;
+      if (mResources[a].first_pass == RG_INVALID_ID) continue;
+      if (mResources[a].memory_type != static_cast<RHIMemoryType>(memType)) continue;
+
+      for (u32 b = a + 1; b < numResources; b++) {
+        if (mResources[b].type != RG_RESOURCE_TRANSIENT) continue;
+        if (mResources[b].first_pass == RG_INVALID_ID) continue;
+        if (mResources[b].memory_type != static_cast<RHIMemoryType>(memType)) continue;
+
+        const auto& ra = mResources[a].physical_range;
+        const auto& rb = mResources[b].physical_range;
+        if (ra.offset + ra.size <= rb.offset || rb.offset + rb.size <= ra.offset) continue;
+
+        if (mResources[a].last_pass < mResources[b].first_pass){
+          mBarriers.push_back({
+            b,
+            RHI_USAGE_NONE,
+            static_cast<u32>(firstUsageOf[b]),
+            mResources[a].last_pass,
+            mResources[b].first_pass,
+            RHI_BARRIER_ALIASING
+          });
+        } else if (mResources[b].last_pass < mResources[a].first_pass) { 
+            mBarriers.push_back({
+            a,
+            RHI_USAGE_NONE,
+            static_cast<u32>(firstUsageOf[a]),
+            mResources[b].last_pass,
+            mResources[a].first_pass,
+            RHI_BARRIER_ALIASING
+          });
+        } else { 
+          assert(false && "overlap - plan() bug"); 
+        }
+      }
+    }
+
+  } 
 }
 
 void RenderGraph::execute(void* cmdBuf) {
@@ -484,7 +545,7 @@ void RenderGraph::reset() {
     for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
       if (mResources[i].type != RG_RESOURCE_TRANSIENT) continue;
       if (!mGPUHandles[i]) continue;
-      mResourceHandlers[mResources[i].desc_index].releaseTo(mPool, mGPUHandles[i], mLastUsages[i], static_cast<u32>(mResources[i].memory_type));
+      mResourceHandlers[mResources[i].desc_index].releaseTo(mResourcePool, mGPUHandles[i], mLastUsages[i], static_cast<u32>(mResources[i].memory_type));
     }
   }
   mPasses.clear();
@@ -503,13 +564,13 @@ void RenderGraph::reset() {
 
 void RenderGraph::destroy() {
   reset();
-  mPool.flush();
+  mResourcePool.flush();
   if (mBackend) {
     for (auto& pool : mMemoryPools)
-      mBackend->freePool(pool);
+      if (pool.size > 0) mBackend->freePool(pool);
   }
-  mMemoryPools.clear();
-  mPoolSizes        = {};
+  mMemoryPools      = {};
+  mPlannedPoolSizes = {};
   mPlanHashes       = {};
   mShouldReallocate = {};
   mBackend = nullptr;

@@ -18,10 +18,10 @@ struct MockBackend final : IRHIBackend {
 struct MockTexture {
   struct Desc { uint32_t width, height; };
 
-  static void* createGPU(const Desc& d, IRHIBackend* backend) {
+  static void* createRHIHandle(const Desc& d, IRHIBackend* backend) {
     return backend->createImage(RHITextureDesc{d.width, d.height, 1, 1, 1});
   }
-  static void destroyGPU(const Desc&, IRHIBackend* backend, void* handle) {
+  static void destroyRHIHandle(const Desc&, IRHIBackend* backend, void* handle) {
     backend->destroyImage(handle);
   }
 };

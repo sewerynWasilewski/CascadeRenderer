@@ -8,9 +8,9 @@ constexpr u32 RG_INVALID_ID = UINT32_MAX;
 
 // Opaque handle to a raw GPU memory block allocated by IRHIAllocator.
 struct RHIMemoryBlock {
-  u32   id;
-  u64   size;
-  void* handle;
+  u32   id     = 0;
+  u64   size   = 0;
+  void* handle = nullptr;
 };
 
 // Backend-agnostic memory type. Maps to Vulkan memoryTypeIndex / D3D12 heap type / Metal storage mode.
