@@ -14,7 +14,7 @@
 #include "RGPass.h"
 #include "RGTypeTraits.h"
 #include "TransientResourcePool.h"
-#include "../rhi/IRHIBackend.h"
+#include "rhi/IRHIBackend.h"
 
 class RenderGraph {
   friend class RGResources;

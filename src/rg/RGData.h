@@ -1,7 +1,7 @@
 #pragma once
 #include <cassert>
 #include "RGTypes.h"
-#include "../rhi/IRHIAllocator.h"
+#include "rhi/IRHIAllocator.h"
 
 // A slice within a RHIMemoryBlock. pool_id indexes into RenderGraph::mMemoryPools.
 struct RGMemoryRange {
@@ -9,13 +9,6 @@ struct RGMemoryRange {
   u64 offset;
   u64 size;
 };
-
-// Stamps out a RGMemoryRange from a pre-planned offset within a block.
-// alignment is validated here - plan() is responsible for producing aligned offsets.
-inline RGMemoryRange rg_suballocate(const RHIMemoryBlock& block, u64 offset, u64 size, u64 alignment) {
-  assert(alignment > 0 && (offset % alignment) == 0 && "rg_suballocate: offset violates alignment");
-  return RGMemoryRange{ block.id, offset, size };
-}
 
 // Per-pass metadata stored in the flat mPasses array. Filled by addPass; global_index set by compile().
 struct RGPassData {

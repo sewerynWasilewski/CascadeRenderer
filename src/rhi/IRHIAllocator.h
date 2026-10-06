@@ -1,5 +1,5 @@
 #pragma once
-#include "../rhi_types.h"
+#include "rhi/rhi_types.h"
 
 // Raw block allocator - see issue #10 for VMA implementation notes.
 // One RHIMemoryBlock per RHIMemoryType is allocated and persisted across frames.

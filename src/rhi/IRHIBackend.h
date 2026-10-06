@@ -1,5 +1,5 @@
 #pragma once
-#include "../rhi_types.h"
+#include "rhi/rhi_types.h"
 
 // Backend interface the render graph calls into for all GPU operations.
 // The concrete implementation (e.g. VkRHIBackend) owns its IRHIAllocator internally.

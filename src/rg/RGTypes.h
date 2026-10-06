@@ -1,5 +1,5 @@
 #pragma once
-#include "../rhi_types.h"
+#include "rhi/rhi_types.h"
 
 // Opaque index into the graph's pass array. Returned by addPass, not versioned.
 struct RGPassHandle {
