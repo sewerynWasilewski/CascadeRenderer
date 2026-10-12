@@ -315,9 +315,6 @@ void RenderGraph::plan() {
   assert(mBackend);
 
   struct FreeRange { u64 offset; u64 size; };
-  // FNV-1a hash algorithm constants
-  constexpr u64 FNV_BASIS = 14695981039346656037ull;
-  constexpr u64 FNV_PRIME = 1099511628211ull; 
 
   struct PlanKey { u32 resource_id, first_pass, last_pass; u64 size, alignment; };
 
@@ -347,13 +344,7 @@ void RenderGraph::plan() {
     std::vector<u32>       active;
     std::vector<FreeRange> free_list;
     u64                    pool_size = 0;
-    // FNV-1a hash algorithm
-    u64 hash = FNV_BASIS;
-    auto feed = [&](const void* data, size_t len) {
-      const auto* p = static_cast<const uint8_t*>(data);
-      for (size_t i = 0; i < len; i++)
-        hash = (hash ^ p[i]) * FNV_PRIME;
-    };
+    u64                    hash      = FNV1A_BASIS;  // chained via fnv1a()'s seed param below
 
     for (u32 index : sorted) {
       // Expire resources whose lifetime ended before this one starts
@@ -415,7 +406,7 @@ void RenderGraph::plan() {
       active.push_back(index);
 
       const PlanKey key{ index, mResources[index].first_pass, mResources[index].last_pass, req.size, req.alignment };
-      feed(&key, sizeof(key));
+      hash = fnv1a(&key, sizeof(key), hash);
     }
 
     mPlannedPoolSizes[memType] = pool_size;
