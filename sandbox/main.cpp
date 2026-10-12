@@ -15,17 +15,6 @@ struct MockBackend final : IRHIBackend {
   void           endPass(void*)                       override {}
 };
 
-struct MockTexture {
-  struct Desc { uint32_t width, height; };
-
-  static void* createRHIHandle(const Desc& d, IRHIBackend* backend) {
-    return backend->createImage(RHITextureDesc{d.width, d.height, 1, 1, 1});
-  }
-  static void destroyRHIHandle(const Desc&, IRHIBackend* backend, void* handle) {
-    backend->destroyImage(handle);
-  }
-};
-
 int main() {
   MockBackend backend;
   RenderGraph rg;
@@ -34,9 +23,9 @@ int main() {
   for (int frame = 0; frame < 3; frame++) {
     printf("\n=== frame %d ===\n", frame);
 
-    RGResourceHandle color = rg.create<MockTexture>("color", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
-    RGResourceHandle depth = rg.create<MockTexture>("depth", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
-    RGResourceHandle light = rg.create<MockTexture>("light", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
+    RGResourceHandle color = rg.create(RHI_RESOURCE_TEXTURE, "color", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
+    RGResourceHandle depth = rg.create(RHI_RESOURCE_TEXTURE, "depth", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
+    RGResourceHandle light = rg.create(RHI_RESOURCE_TEXTURE, "light", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
 
     rg.addPass("GBuffer", RG_PASS_RASTER,
       [&](RenderGraph::PassBuilder& b) {

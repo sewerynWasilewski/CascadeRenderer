@@ -32,8 +32,8 @@ TEST_CASE("single writer two readers: both readers scheduled after writer") {
   RenderGraph rg;
   rg.setBackend(&backend);
 
-  RGResourceHandle color = rg.create<MockTexture>("color", RHI_RESOURCE_TEXTURE,
-                                                  RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
+  RGResourceHandle color = rg.create(RHI_RESOURCE_TEXTURE, "color",
+                                      RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
 
   RGPassHandle writer = rg.addPass("Writer", RG_PASS_RASTER,
     [&](RenderGraph::PassBuilder& b) { color = b.write(color, RHI_USAGE_COLOR_ATTACHMENT); },
@@ -63,8 +63,8 @@ TEST_CASE("single writer two readers: two separate edges emitted") {
   RenderGraph rg;
   rg.setBackend(&backend);
 
-  RGResourceHandle color = rg.create<MockTexture>("color", RHI_RESOURCE_TEXTURE,
-                                                  RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
+  RGResourceHandle color = rg.create(RHI_RESOURCE_TEXTURE, "color",
+                                      RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
 
   RGPassHandle writer = rg.addPass("Writer", RG_PASS_RASTER,
     [&](RenderGraph::PassBuilder& b) { color = b.write(color, RHI_USAGE_COLOR_ATTACHMENT); },
@@ -98,8 +98,8 @@ TEST_CASE("write with no readers produces terminal edge") {
   RenderGraph rg;
   rg.setBackend(&backend);
 
-  RGResourceHandle color = rg.create<MockTexture>("color", RHI_RESOURCE_TEXTURE,
-                                                  RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
+  RGResourceHandle color = rg.create(RHI_RESOURCE_TEXTURE, "color",
+                                      RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
 
   RGPassHandle writer = rg.addPass("Writer", RG_PASS_RASTER,
     [&](RenderGraph::PassBuilder& b) { color = b.write(color, RHI_USAGE_COLOR_ATTACHMENT); },
@@ -132,8 +132,8 @@ TEST_CASE("compile() twice without reset() does not leak GPU handles") {
   RenderGraph rg;
   rg.setBackend(&backend);
 
-  RGResourceHandle color = rg.create<MockTexture>("color", RHI_RESOURCE_TEXTURE,
-                                                  RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
+  RGResourceHandle color = rg.create(RHI_RESOURCE_TEXTURE, "color",
+                                      RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
   // NEVER_CULL: Writer is a leaf pass. Without the flag it is culled and no GPU handle
   // is created, making the create/destroy count assertions meaningless.
   rg.addPass("Writer", RG_PASS_RASTER | RG_PASS_NEVER_CULL,

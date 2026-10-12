@@ -5,8 +5,7 @@
 #include <cassert>
 #include "core/types.h"
 #include "rhi/rhi_types.h"
-
-struct IRHIBackend;
+#include "rhi/IRHIBackend.h"
 
 struct AcquiredHandle {
   void*    handle;
@@ -16,23 +15,20 @@ struct AcquiredHandle {
 // Freelist pool for transient GPU resources. Sits below the render graph — the graph
 // acquires handles at compile() and returns them at reset(). Handles are reused across
 // frames as long as their type, descriptor, and memory type all match.
-//
-// The graph rebuilds every frame; this pool is what makes that cheap.
 class TransientResourcePool {
 public:
   void setBackend(IRHIBackend* backend) { mBackend = backend; }
 
-  AcquiredHandle tryAcquire(u64 typeId, u64 descHash, u32 memType) {
-    auto it = mFreeList.find({typeId, descHash, memType});
+  AcquiredHandle tryAcquire(RHIResourceKind kind, u64 descHash, u32 memType) {
+    auto it = mFreeList.find({kind, descHash, memType});
     if (it == mFreeList.end() || it->second.empty()) return {nullptr, RHI_USAGE_NONE};
     AcquiredHandle result = {it->second.back().handle, it->second.back().last_usage};
     it->second.pop_back();
     return result;
   }
 
-  void release(u64 typeId, u64 descHash, u32 memType, void* handle, RHIUsage last_usage,
-               std::function<void(IRHIBackend*, void*)> destroyFn) {
-    mFreeList[{typeId, descHash, memType}].push_back({handle, last_usage, std::move(destroyFn)});
+  void release(RHIResourceKind kind, u64 descHash, u32 memType, void* handle, RHIUsage last_usage) {
+    mFreeList[{kind, descHash, memType}].push_back({handle, last_usage});
   }
 
   // Destroys all free handles for one memory type.
@@ -43,8 +39,17 @@ public:
     assert(mBackend);
     for (auto it = mFreeList.begin(); it != mFreeList.end(); ) {
       if (it->first.memType == memType) {
-        for (auto& e : it->second)
-          e.destroyFn(mBackend, e.handle);
+        switch(it->first.kind) { 
+          case RHIResourceKind::RHI_RESOURCE_TEXTURE: 
+            for (auto& e : it->second)
+              mBackend->destroyImage(e.handle);
+            break; 
+          case RHIResourceKind::RHI_RESOURCE_BUFFER:
+            for (auto& e : it->second)
+              mBackend->destroyBuffer(e.handle);
+            break; 
+        }
+
         it = mFreeList.erase(it);
       } else {
         ++it;
@@ -55,31 +60,40 @@ public:
   // Destroys all free handles. Call on shutdown or when memory pressure requires eviction.
   void flush() {
     assert(mBackend);
-    for (auto& [key, entries] : mFreeList)
-      for (auto& e : entries)
-        e.destroyFn(mBackend, e.handle);
+    for (auto& [key, entries] : mFreeList){
+      switch(key.kind) { 
+        case RHIResourceKind::RHI_RESOURCE_TEXTURE: 
+          for (auto& e : entries)
+            mBackend->destroyImage(e.handle);
+          break; 
+        case RHIResourceKind::RHI_RESOURCE_BUFFER:
+          for (auto& e : entries)
+            mBackend->destroyBuffer(e.handle);
+          break; 
+      }
+    }
+
     mFreeList.clear();
   }
 
 private:
   struct PoolKey {
-    u64 typeId;
+    RHIResourceKind kind;
     u64 descHash;
     u32 memType;
     bool operator==(const PoolKey& o) const {
-      return typeId == o.typeId && descHash == o.descHash && memType == o.memType;
+      return kind == o.kind && descHash == o.descHash && memType == o.memType;
     }
   };
   struct PoolKeyHash {
     size_t operator()(const PoolKey& k) const {
-      return k.typeId ^ (k.descHash * 11400714819323198485ull) ^ ((u64)k.memType * 2654435761ull);
+      return k.kind ^ (k.descHash * 11400714819323198485ull) ^ ((u64)k.memType * 2654435761ull);
     }
   };
 
   struct Entry {
     void*    handle;
     RHIUsage last_usage;
-    std::function<void(IRHIBackend*, void*)> destroyFn;
   };
 
   std::unordered_map<PoolKey, std::vector<Entry>, PoolKeyHash> mFreeList;

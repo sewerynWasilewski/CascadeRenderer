@@ -27,7 +27,8 @@ struct RGResourceData {
   RHIResourceKind kind;
   RGResourceType  type;
   RHIMemoryType   memory_type;    // which memory pool this resource belongs to
-  u32             desc_index;     // index into mResourceHandlers
+  RHIResourceDesc desc;
+  u64             desc_hash;
   u32             version;        // incremented each time a pass writes this resource
   u32             first_pass;     // global pass index of first use - set by compile()
   u32             last_pass;      // global pass index of last use  - set by compile()

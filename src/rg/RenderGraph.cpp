@@ -1,4 +1,5 @@
 #include "RenderGraph.h"
+#include "core/algorithm.h"
 
 static constexpr float kMemorySlackMul = 1.5f;
 
@@ -16,7 +17,7 @@ RGResourceHandle RenderGraph::PassBuilder::write(RGResourceHandle handle, RHIUsa
   res.queue_mask |= rhi_queue_bit(mRG.mPasses[mPassId].queue);
   res.version++;
   mRG.mUsages.push_back({ mPassId, handle.id, res.version, usage, true });
-  return RGResourceHandle{ handle.id, res.version };
+  return RGResourceHandle{ handle.id, res.version, handle.epoch };
 }
 
 RGResourceHandle RenderGraph::PassBuilder::read(RGResourceHandle handle, RHIUsage usage) {
@@ -34,6 +35,52 @@ RGResourceHandle RenderGraph::PassBuilder::read(RGResourceHandle handle, RHIUsag
   mRG.mUsages.push_back({ mPassId, handle.id, handle.version, usage, false });
   return handle;
 }
+
+RGResourceHandle RenderGraph::create(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc){
+  const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_TRANSIENT, desc);
+
+  return RGResourceHandle{ id, 0, mEpoch };
+}
+
+RGResourceHandle RenderGraph::import(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle) {
+  assert(gpuHandle != nullptr && "import: gpuHandle must not be null");
+  const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_EXTERNAL, desc);
+  mGPUHandles[id] = gpuHandle;  // caller is responsible for the real initial usage state
+  return RGResourceHandle{ id, 0, mEpoch };
+}
+
+inline u32 RenderGraph::registerResource(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, RGResourceType resType, RHIResourceDesc desc) { 
+  const u32 id = static_cast<u32>(mResources.size());
+
+  RGResourceData res{};
+  res.name           = name;
+  res.kind           = kind;
+  res.type           = resType;
+  res.memory_type    = memoryType;
+  res.desc           = desc;
+  res.desc_hash      = std::visit([](auto&& d) { return fnv1a(&d, sizeof(d)); }, desc);
+  res.version        = 0;
+  res.first_pass     = RG_INVALID_ID;
+  res.last_pass      = RG_INVALID_ID;
+  res.queue_mask     = 0;
+  res.physical_range = RGMemoryRange{};
+  mResources.push_back(res);
+
+  mGPUHandles.push_back(nullptr);
+  mLastUsages.push_back(RHI_USAGE_NONE);
+
+  return id; 
+}
+
+// TO DO: change to a RHIImageHandle RHIBufferHandle variant
+void* RGResources::get(RGResourceHandle handle) {
+  assert(handle.valid()                                             && "invalid handle");
+  assert(handle.epoch == mRG.mEpoch                                && "stale handle: used across reset()");
+  assert(handle.id < mRG.mResources.size()                         && "stale handle: id out of range");
+  assert(mRG.mResources[handle.id].first_pass != RG_INVALID_ID     && "resource was culled this frame");
+  return mRG.mGPUHandles[handle.id];
+}
+
 
 bool RenderGraph::isValid(RGResourceHandle handle) const {
   if (!handle.valid()) return false;
@@ -186,12 +233,16 @@ void RenderGraph::compile() {
     if (mResources[i].type       != RG_RESOURCE_TRANSIENT) continue;
     if (mResources[i].first_pass == RG_INVALID_ID)         continue;
     const u32 memType = static_cast<u32>(mResources[i].memory_type);
-    auto& handler = mResourceHandlers[mResources[i].desc_index];
     if (mGPUHandles[i])
-      handler.releaseTo(mResourcePool, mGPUHandles[i], mLastUsages[i], memType);
-    const AcquiredHandle acquired = handler.acquireFrom(mResourcePool, mBackend, memType);
-    mGPUHandles[i]  = acquired.handle;
-    mLastUsages[i]  = acquired.last_usage;
+      mResourcePool.release(mResources[i].kind, mResources[i].desc_hash, memType, mGPUHandles[i], mLastUsages[i]);
+    const AcquiredHandle acquired = mResourcePool.tryAcquire(mResources[i].kind, mResources[i].desc_hash, memType);
+    if (acquired.handle) {
+      mGPUHandles[i] = acquired.handle;
+      mLastUsages[i] = acquired.last_usage;
+    } else {
+      createRHIHandle(i);
+      mLastUsages[i] = RHI_USAGE_NONE;
+    }
   }
   
   // 6. Generate mBarriers from usage transitions
@@ -404,8 +455,8 @@ void RenderGraph::allocate() {
       if (mResources[i].first_pass == RG_INVALID_ID) continue;
       if (mResources[i].memory_type != static_cast<RHIMemoryType>(memType)) continue;
 
-      mResourceHandlers[mResources[i].desc_index].destroyRHIHandle(mBackend, mGPUHandles[i]); 
-      mGPUHandles[i] = mResourceHandlers[mResources[i].desc_index].createRHIHandle(mBackend); 
+      destroyRHIHandle(i);
+      createRHIHandle(i);
       mBackend->bindMemory(mGPUHandles[i], mMemoryPools[memType], mResources[i].physical_range.offset); 
     }
 
@@ -545,7 +596,7 @@ void RenderGraph::reset() {
     for (u32 i = 0; i < static_cast<u32>(mResources.size()); i++) {
       if (mResources[i].type != RG_RESOURCE_TRANSIENT) continue;
       if (!mGPUHandles[i]) continue;
-      mResourceHandlers[mResources[i].desc_index].releaseTo(mResourcePool, mGPUHandles[i], mLastUsages[i], static_cast<u32>(mResources[i].memory_type));
+      mResourcePool.release(mResources[i].kind, mResources[i].desc_hash, mResources[i].memory_type, mGPUHandles[i], mLastUsages[i]); 
     }
   }
   mPasses.clear();
@@ -554,7 +605,6 @@ void RenderGraph::reset() {
   mUsages.clear();
   mEdges.clear();
   mBarriers.clear();
-  mResourceHandlers.clear();
   mExecutors.clear();
   mGPUHandles.clear();
   mLastUsages.clear();
@@ -574,4 +624,26 @@ void RenderGraph::destroy() {
   mPlanHashes       = {};
   mShouldReallocate = {};
   mBackend = nullptr;
+}
+
+inline void RenderGraph::destroyRHIHandle(u32 resIndex){
+  switch (mResources[resIndex].kind) {
+  case RHIResourceKind::RHI_RESOURCE_BUFFER:
+    mBackend->destroyBuffer(mGPUHandles[resIndex]); 
+    break;
+  case RHIResourceKind::RHI_RESOURCE_TEXTURE:
+    mBackend->destroyImage(mGPUHandles[resIndex]); 
+    break;
+  }
+}
+
+inline void RenderGraph::createRHIHandle(u32 resIndex){
+  switch (mResources[resIndex].kind) {
+  case RHIResourceKind::RHI_RESOURCE_BUFFER:
+    mGPUHandles[resIndex] = mBackend->createBuffer(std::get<RHIBufferDesc>(mResources[resIndex].desc));
+    break;
+  case RHIResourceKind::RHI_RESOURCE_TEXTURE:
+    mGPUHandles[resIndex] = mBackend->createImage(std::get<RHITextureDesc>(mResources[resIndex].desc));
+    break;
+  }
 }
