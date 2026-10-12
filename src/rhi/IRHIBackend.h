@@ -1,4 +1,5 @@
 #pragma once
+#include "core/types.h"
 #include "rhi/rhi_types.h"
 
 // Backend interface the render graph calls into for all GPU operations.

@@ -1,4 +1,5 @@
 #pragma once
+#include "core/types.h"
 #include "rhi/rhi_types.h"
 
 // Raw block allocator - see issue #10 for VMA implementation notes.

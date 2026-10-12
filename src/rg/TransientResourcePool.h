@@ -3,6 +3,7 @@
 #include <vector>
 #include <functional>
 #include <cassert>
+#include "core/types.h"
 #include "rhi/rhi_types.h"
 
 struct IRHIBackend;

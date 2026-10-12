@@ -1,8 +1,6 @@
 #pragma once
-#include <cstdint>
-
-using u32 = uint32_t;
-using u64 = uint64_t;
+#include "core/types.h"
+#include <variant>
 
 constexpr u32 RG_INVALID_ID = UINT32_MAX;
 
@@ -101,3 +99,5 @@ struct RHIMemoryRequirements {
   u64 size;
   u64 alignment;
 };
+
+using RHIResourceDesc = std::variant<RHITextureDesc, RHIBufferDesc>;

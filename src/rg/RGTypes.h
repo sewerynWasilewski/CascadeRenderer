@@ -1,4 +1,5 @@
 #pragma once
+#include "core/types.h"
 #include "rhi/rhi_types.h"
 
 // Opaque index into the graph's pass array. Returned by addPass, not versioned.
