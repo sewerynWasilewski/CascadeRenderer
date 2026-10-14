@@ -36,19 +36,20 @@ RGResourceHandle RenderGraph::PassBuilder::read(RGResourceHandle handle, RHIUsag
   return handle;
 }
 
-RGResourceHandle RenderGraph::create(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc){
-  const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_TRANSIENT, desc);
+RGResourceHandle RenderGraph::createImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc){
+  const u32 id = registerResource(name, memoryType, RG_RESOURCE_TRANSIENT, desc);
 
   return RGResourceHandle{ id, 0, mEpoch };
 }
 
-RGResourceHandle RenderGraph::createPersistent(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc) {
+RGResourceHandle RenderGraph::createPersistentImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc) {
+  const RHIResourceKind kind = rhi_kind_of(desc);
   auto it = mPersistentResources.find(name);
 
   void* handle = (it != mPersistentResources.end()) ?
           it->second.handle : createRHIHandle(kind, desc);
 
-  const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_PERSISTENT, desc);
+  const u32 id = registerResource(name, memoryType, RG_RESOURCE_PERSISTENT, desc);
   mGPUHandles[id] = handle;
   if (it == mPersistentResources.end())
     mPersistentResources.emplace(name, RGPersistentEntry{handle, kind, desc});
@@ -56,19 +57,19 @@ RGResourceHandle RenderGraph::createPersistent(RHIResourceKind kind, const char*
   return RGResourceHandle{ id, 0, mEpoch };
 }
 
-RGResourceHandle RenderGraph::import(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle) {
+RGResourceHandle RenderGraph::importImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle) {
   assert(gpuHandle != nullptr && "import: gpuHandle must not be null");
-  const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_EXTERNAL, desc);
+  const u32 id = registerResource(name, memoryType, RG_RESOURCE_EXTERNAL, desc);
   mGPUHandles[id] = gpuHandle;  // caller is responsible for the real initial usage state
   return RGResourceHandle{ id, 0, mEpoch };
 }
 
-inline u32 RenderGraph::registerResource(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, RGResourceType resType, RHIResourceDesc desc) {
+inline u32 RenderGraph::registerResource(const char* name, RHIMemoryType memoryType, RGResourceType resType, RHIResourceDesc desc) {
   const u32 id = static_cast<u32>(mResources.size());
 
   RGResourceData res{};
   res.name           = name;
-  res.kind           = kind;
+  res.kind           = rhi_kind_of(desc);
   res.type           = resType;
   res.memory_type    = memoryType;
   res.desc           = desc;

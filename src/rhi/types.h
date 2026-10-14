@@ -1,6 +1,7 @@
 #pragma once
 #include "core/types.h"
 #include <variant>
+#include <type_traits>
 
 constexpr u32 RG_INVALID_ID = UINT32_MAX;
 
@@ -101,3 +102,15 @@ struct RHIMemoryRequirements {
 };
 
 using RHIResourceDesc = std::variant<RHITextureDesc, RHIBufferDesc>;
+
+// RHIResourceKind doubles as RHIResourceDesc's variant index. These assert the two stay in
+// lockstep by construction — reordering the variant without updating the enum (or vice versa)
+// fails to compile here instead of silently picking the wrong desc type at runtime.
+static_assert(std::is_same_v<std::variant_alternative_t<RHI_RESOURCE_TEXTURE, RHIResourceDesc>, RHITextureDesc>,
+              "RHI_RESOURCE_TEXTURE must match RHITextureDesc's position in RHIResourceDesc");
+static_assert(std::is_same_v<std::variant_alternative_t<RHI_RESOURCE_BUFFER, RHIResourceDesc>, RHIBufferDesc>,
+              "RHI_RESOURCE_BUFFER must match RHIBufferDesc's position in RHIResourceDesc");
+
+inline RHIResourceKind rhi_kind_of(const RHIResourceDesc& desc) {
+  return static_cast<RHIResourceKind>(desc.index());
+}

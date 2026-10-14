@@ -49,10 +49,14 @@ public:
     u32          mPassId;
   };
 
-  RGResourceHandle create(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc);
-  RGResourceHandle createPersistent(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc);
+  RGResourceHandle createImage(const char* name, RHIMemoryType memoryType, RHITextureDesc desc)  { return createImpl(name, memoryType, desc); }
+  RGResourceHandle createBuffer(const char* name, RHIMemoryType memoryType, RHIBufferDesc desc)   { return createImpl(name, memoryType, desc); }
 
-  RGResourceHandle import(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle);
+  RGResourceHandle createPersistentImage(const char* name, RHIMemoryType memoryType, RHITextureDesc desc) { return createPersistentImpl(name, memoryType, desc); }
+  RGResourceHandle createPersistentBuffer(const char* name, RHIMemoryType memoryType, RHIBufferDesc desc) { return createPersistentImpl(name, memoryType, desc); }
+
+  RGResourceHandle importImage(const char* name, RHIMemoryType memoryType, RHITextureDesc desc, void* gpuHandle) { return importImpl(name, memoryType, desc, gpuHandle); }
+  RGResourceHandle importBuffer(const char* name, RHIMemoryType memoryType, RHIBufferDesc desc, void* gpuHandle) { return importImpl(name, memoryType, desc, gpuHandle); }
 
   template<typename Setup, typename Execute>
   RGPassHandle addPass(const char* name, RGPassFlags flags, Setup&& setup, Execute&& exec); 
@@ -111,7 +115,11 @@ private:
 
   std::unordered_map<std::string, RGPersistentEntry> mPersistentResources;
 
-  inline u32 registerResource(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, RGResourceType resType, RHIResourceDesc desc);
+  RGResourceHandle createImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc);
+  RGResourceHandle createPersistentImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc);
+  RGResourceHandle importImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle);
+
+  inline u32 registerResource(const char* name, RHIMemoryType memoryType, RGResourceType resType, RHIResourceDesc desc);
 
   inline void destroyRHIHandle(u32 resIndex); 
   inline void createRHIHandle(u32 resIndex);

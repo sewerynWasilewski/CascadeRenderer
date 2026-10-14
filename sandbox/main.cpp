@@ -23,9 +23,9 @@ int main() {
   for (int frame = 0; frame < 3; frame++) {
     printf("\n=== frame %d ===\n", frame);
 
-    RGResourceHandle color = rg.create(RHI_RESOURCE_TEXTURE, "color", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
-    RGResourceHandle depth = rg.create(RHI_RESOURCE_TEXTURE, "depth", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
-    RGResourceHandle light = rg.create(RHI_RESOURCE_TEXTURE, "light", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
+    RGResourceHandle color = rg.createImage("color", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
+    RGResourceHandle depth = rg.createImage("depth", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
+    RGResourceHandle light = rg.createImage("light", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
 
     rg.addPass("GBuffer", RG_PASS_RASTER,
       [&](RenderGraph::PassBuilder& b) {
