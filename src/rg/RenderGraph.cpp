@@ -42,6 +42,20 @@ RGResourceHandle RenderGraph::create(RHIResourceKind kind, const char* name, RHI
   return RGResourceHandle{ id, 0, mEpoch };
 }
 
+RGResourceHandle RenderGraph::createPersistent(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc) {
+  auto it = mPersistentResources.find(name);
+
+  void* handle = (it != mPersistentResources.end()) ?
+          it->second.handle : createRHIHandle(kind, desc);
+
+  const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_PERSISTENT, desc);
+  mGPUHandles[id] = handle;
+  if (it == mPersistentResources.end())
+    mPersistentResources.emplace(name, RGPersistentEntry{handle, kind, desc});
+
+  return RGResourceHandle{ id, 0, mEpoch };
+}
+
 RGResourceHandle RenderGraph::import(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle) {
   assert(gpuHandle != nullptr && "import: gpuHandle must not be null");
   const u32 id = registerResource(name, kind, memoryType, RG_RESOURCE_EXTERNAL, desc);
@@ -49,7 +63,7 @@ RGResourceHandle RenderGraph::import(RHIResourceKind kind, const char* name, RHI
   return RGResourceHandle{ id, 0, mEpoch };
 }
 
-inline u32 RenderGraph::registerResource(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, RGResourceType resType, RHIResourceDesc desc) { 
+inline u32 RenderGraph::registerResource(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, RGResourceType resType, RHIResourceDesc desc) {
   const u32 id = static_cast<u32>(mResources.size());
 
   RGResourceData res{};
@@ -610,6 +624,10 @@ void RenderGraph::destroy() {
     for (auto& pool : mMemoryPools)
       if (pool.size > 0) mBackend->freePool(pool);
   }
+  
+  for(auto& [key, persistentEntry] : mPersistentResources)
+    destroyRHIHandle(persistentEntry.kind, persistentEntry.handle);
+
   mMemoryPools      = {};
   mPlannedPoolSizes = {};
   mPlanHashes       = {};
@@ -618,23 +636,40 @@ void RenderGraph::destroy() {
 }
 
 inline void RenderGraph::destroyRHIHandle(u32 resIndex){
-  switch (mResources[resIndex].kind) {
-  case RHIResourceKind::RHI_RESOURCE_BUFFER:
-    mBackend->destroyBuffer(mGPUHandles[resIndex]); 
-    break;
-  case RHIResourceKind::RHI_RESOURCE_TEXTURE:
-    mBackend->destroyImage(mGPUHandles[resIndex]); 
-    break;
-  }
+  destroyRHIHandle(mResources[resIndex].kind, mGPUHandles[resIndex]);
 }
 
 inline void RenderGraph::createRHIHandle(u32 resIndex){
-  switch (mResources[resIndex].kind) {
+  mGPUHandles[resIndex] = createRHIHandle(mResources[resIndex].kind, mResources[resIndex].desc); 
+}
+
+inline void RenderGraph::destroyRHIHandle(RHIResourceKind kind, void* handle){
+  assert(mBackend); 
+  switch (kind){
   case RHIResourceKind::RHI_RESOURCE_BUFFER:
-    mGPUHandles[resIndex] = mBackend->createBuffer(std::get<RHIBufferDesc>(mResources[resIndex].desc));
+    mBackend->destroyBuffer(handle); 
     break;
   case RHIResourceKind::RHI_RESOURCE_TEXTURE:
-    mGPUHandles[resIndex] = mBackend->createImage(std::get<RHITextureDesc>(mResources[resIndex].desc));
+    mBackend->destroyImage(handle); 
     break;
+  default:
+    assert(false && "undeclared RHIResourceKind"); 
+    break; 
+  }
+}
+
+inline void* RenderGraph::createRHIHandle(RHIResourceKind kind, RHIResourceDesc desc){ 
+  assert(mBackend);
+  switch (kind){
+  case RHIResourceKind::RHI_RESOURCE_BUFFER:
+    return mBackend->createBuffer(std::get<RHIBufferDesc>(desc)); 
+    break;
+  case RHIResourceKind::RHI_RESOURCE_TEXTURE:
+    return mBackend->createImage(std::get<RHITextureDesc>(desc)); 
+    break;
+  default:
+    assert(false && "undeclared RHIResourceKind");
+    return nullptr; 
+    break; 
   }
 }

@@ -40,6 +40,7 @@ inline RHIQueueType rg_queue_from_flags(RGPassFlags f) {
 
 // Ownership model: transient resources are allocated by the graph; external ones are imported.
 enum RGResourceType : u32 {
-  RG_RESOURCE_TRANSIENT = 0,
-  RG_RESOURCE_EXTERNAL  = 1,
+  RG_RESOURCE_TRANSIENT  = 0,
+  RG_RESOURCE_EXTERNAL   = 1,
+  RG_RESOURCE_PERSISTENT = 2,
 };

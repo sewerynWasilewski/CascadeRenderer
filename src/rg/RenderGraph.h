@@ -50,8 +50,9 @@ public:
   };
 
   RGResourceHandle create(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc);
-  
-  RGResourceHandle import(RHIResourceKind kind, const char* name,  RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle); 
+  RGResourceHandle createPersistent(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc);
+
+  RGResourceHandle import(RHIResourceKind kind, const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle);
 
   template<typename Setup, typename Execute>
   RGPassHandle addPass(const char* name, RGPassFlags flags, Setup&& setup, Execute&& exec); 
@@ -102,10 +103,21 @@ private:
   IRHIBackend*          mBackend = nullptr;
   TransientResourcePool mResourcePool;
 
-  inline u32 registerResource(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, RGResourceType resType, RHIResourceDesc desc); 
+  struct RGPersistentEntry {
+    void*           handle;
+    RHIResourceKind kind;
+    RHIResourceDesc desc;
+  };
+
+  std::unordered_map<std::string, RGPersistentEntry> mPersistentResources;
+
+  inline u32 registerResource(const char* name, RHIResourceKind kind, RHIMemoryType memoryType, RGResourceType resType, RHIResourceDesc desc);
 
   inline void destroyRHIHandle(u32 resIndex); 
   inline void createRHIHandle(u32 resIndex);
+
+  inline void destroyRHIHandle(RHIResourceKind kind, void* handle);
+  inline void* createRHIHandle(RHIResourceKind kind, RHIResourceDesc desc);
 };
 
 // Read-only resource accessor passed into execute callbacks. Passes retrieve their concrete
