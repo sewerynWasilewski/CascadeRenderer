@@ -4,7 +4,7 @@
 #include <functional>
 #include <cassert>
 #include "core/types.h"
-#include "rhi/rhi_types.h"
+#include "rhi/types.h"
 #include "rhi/IRHIBackend.h"
 
 struct AcquiredHandle {
