@@ -1,5 +1,6 @@
 #include <cstdio>
 #include "rg/RenderGraph.h"
+#include "rhi/vulkan/VkRHIBackend.h"
 
 struct MockBackend final : IRHIBackend {
   void* createImage(const RHITextureDesc&)            override { printf("  [backend] createImage\n");  return reinterpret_cast<void*>(0xDEAD); }
@@ -16,7 +17,8 @@ struct MockBackend final : IRHIBackend {
 };
 
 int main() {
-  MockBackend backend;
+  VkRHIBackend backend;
+  //MockBackend backend;
   RenderGraph rg;
   rg.setBackend(&backend);
 

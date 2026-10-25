@@ -4,7 +4,10 @@ set(RENDERER_SOURCES
 )
 
 if(Vulkan_FOUND)
-    list(APPEND RENDERER_SOURCES rhi/vulkan/VkRHIAllocator.cpp)
+    list(APPEND RENDERER_SOURCES 
+        rhi/vulkan/VkRHIAllocator.cpp
+        rhi/vulkan/VkRHIBackend.cpp
+    )
 endif()
 
 add_library(renderer STATIC ${RENDERER_SOURCES})
