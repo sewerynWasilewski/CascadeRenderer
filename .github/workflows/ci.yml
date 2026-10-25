@@ -10,7 +10,9 @@ jobs:
           submodules: recursive
 
       - name: Install dependencies
-        run: sudo apt-get install -y cmake ninja-build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libvulkan-dev libxkbcommon-dev libwayland-dev wayland-protocols extra-cmake-modules libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
 
       - name: Configure
         # GLFW Wayland and X11 disabled: no display server available on the runner and
