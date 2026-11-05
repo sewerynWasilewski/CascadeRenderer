@@ -12,65 +12,64 @@
 
 class VkRHIBackend final : public IRHIBackend {
 public:
-    VkRHIBackend(GLFWwindow* window);
-    ~VkRHIBackend() override;
+  VkRHIBackend(GLFWwindow* window);
+  ~VkRHIBackend() override;
 
-    void* createImage(const RHITextureDesc& desc) override;
-    void* createBuffer(const RHIBufferDesc& desc) override;
-    void  destroyImage(void* handle) override;
-    void  destroyBuffer(void* handle) override;
+  void* createImage(const RHITextureDesc& desc) override;
+  void* createBuffer(const RHIBufferDesc& desc) override;
+  void  destroyImage(void* handle) override;
+  void  destroyBuffer(void* handle) override;
 
-    RHIMemoryRequirements getMemoryRequirements(void* gpuHandle, RHIResourceKind kind) override;
+  RHIMemoryRequirements getMemoryRequirements(void* gpuHandle, RHIResourceKind kind) override;
 
-    RHIMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) override;
-    void           freePool(RHIMemoryBlock block) override;
+  RHIMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) override;
+  void           freePool(RHIMemoryBlock block) override;
 
-    void bindMemory(void* gpuHandle, RHIMemoryBlock block, u64 offset) override;
-    void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) override;
-    void beginPass(void* cmdBuf, RHIPassType type) override;
-    void endPass(void* cmdBuf) override;
-    void beginFrame();
-    void endFrame();
-    void createSwapChain(GLFWwindow* window);
-    
-    
-    VkImageView getCurrentSwapchainImageView() const;
-    VkInstance       getInstance()             const { return mInstance; }
-    VkPhysicalDevice getPhysicalDevice()       const { return mPhysicalDevice; }
-    VkDevice         getDevice()               const { return mDevice; }
-    VkQueue          getGraphicsQueue()        const { return mGraphicsQueue; }
-    u32              getGraphicsQueueFamily()  const { return mGraphicsQueueFamily; }
-    VkFormat   	     getSwapchainImageFormat() const { return m_SwapchainImageFormat; }
-    VkExtent2D       getSwapchainExtent()      const { return m_SwapchainExtent; }
-    VkCommandBuffer  getCurrentCommandBuffer() const { return m_CommandBuffer; }
+  void bindMemory(void* gpuHandle, RHIMemoryBlock block, u64 offset) override;
+  void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) override;
+  void beginPass(void* cmdBuf, RHIPassType type) override;
+  void endPass(void* cmdBuf) override;
+  void beginFrame();
+  void endFrame();
+  void createSwapChain(GLFWwindow* window);
+
+  VkImageView getCurrentSwapchainImageView() const;
+  VkInstance       getInstance()             const { return mInstance; }
+  VkPhysicalDevice getPhysicalDevice()       const { return mPhysicalDevice; }
+  VkDevice         getDevice()               const { return mDevice; }
+  VkQueue          getGraphicsQueue()        const { return mGraphicsQueue; }
+  u32              getGraphicsQueueFamily()  const { return mGraphicsQueueFamily; }
+  VkFormat   	     getSwapchainImageFormat() const { return m_SwapchainImageFormat; }
+  VkExtent2D       getSwapchainExtent()      const { return m_SwapchainExtent; }
+  VkCommandBuffer  getCurrentCommandBuffer() const { return m_CommandBuffer; }
 private:
-    void createInstance();
-    void setupDebugMessenger();
-    void pickPhysicalDevice();
-    void createLogicalDevice();
+  void createInstance();
+  void setupDebugMessenger();
+  void pickPhysicalDevice();
+  void createLogicalDevice();
 
-    bool checkValidationLayerSupport();
+  bool checkValidationLayerSupport();
 
-    VkSurfaceKHR m_Surface = VK_NULL_HANDLE;
-    VkSwapchainKHR m__Swapchain = VK_NULL_HANDLE;
-    VkCommandPool m_CommandPool = VK_NULL_HANDLE;
-    VkCommandBuffer m_CommandBuffer = VK_NULL_HANDLE;
-    VkInstance               mInstance            = VK_NULL_HANDLE;
-    VkDebugUtilsMessengerEXT mDebugMessenger      = VK_NULL_HANDLE;
-    VkPhysicalDevice         mPhysicalDevice      = VK_NULL_HANDLE;
-    VkDevice                 mDevice              = VK_NULL_HANDLE;
-    VkQueue                  mGraphicsQueue       = VK_NULL_HANDLE;
-    u32                      mGraphicsQueueFamily = RG_INVALID_ID;
-    VkSwapchainKHR              m_Swapchain = VK_NULL_HANDLE;
-    std::vector<VkImage>        m_SwapchainImages;
-    std::vector<VkImageView> m_SwapchainImageViews;
-    uint32_t m_CurrentImageIndex = 0;
-    VkFormat                    m_SwapchainImageFormat = VK_FORMAT_UNDEFINED;
-    VkExtent2D                  m_SwapchainExtent = {0, 0};
-    VkSemaphore m_ImageAvailableSemaphore = VK_NULL_HANDLE;
-    VkSemaphore m_RenderFinishedSemaphore = VK_NULL_HANDLE;
+  VkSurfaceKHR m_Surface = VK_NULL_HANDLE;
+  VkSwapchainKHR m__Swapchain = VK_NULL_HANDLE;
+  VkCommandPool m_CommandPool = VK_NULL_HANDLE;
+  VkCommandBuffer m_CommandBuffer = VK_NULL_HANDLE;
+  VkInstance               mInstance            = VK_NULL_HANDLE;
+  VkDebugUtilsMessengerEXT mDebugMessenger      = VK_NULL_HANDLE;
+  VkPhysicalDevice         mPhysicalDevice      = VK_NULL_HANDLE;
+  VkDevice                 mDevice              = VK_NULL_HANDLE;
+  VkQueue                  mGraphicsQueue       = VK_NULL_HANDLE;
+  u32                      mGraphicsQueueFamily = RG_INVALID_ID;
+  VkSwapchainKHR              m_Swapchain = VK_NULL_HANDLE;
+  std::vector<VkImage>        m_SwapchainImages;
+  std::vector<VkImageView> m_SwapchainImageViews;
+  uint32_t m_CurrentImageIndex = 0;
+  VkFormat                    m_SwapchainImageFormat = VK_FORMAT_UNDEFINED;
+  VkExtent2D                  m_SwapchainExtent = {0, 0};
+  VkSemaphore m_ImageAvailableSemaphore = VK_NULL_HANDLE;
+  VkSemaphore m_RenderFinishedSemaphore = VK_NULL_HANDLE;
 
-    VkRHIAllocator mAllocator;
+  VkRHIAllocator mAllocator;
 };
 
 // Vulkan backend - implements IRHIBackend and owns the VkRHIAllocator.
