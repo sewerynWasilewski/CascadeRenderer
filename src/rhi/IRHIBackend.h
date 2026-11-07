@@ -2,6 +2,9 @@
 #include "core/types.h"
 #include "rhi/types.h"
 
+// TO DO: consider named void* aliases (RHICommandBuffer, RHIResourceHandle, RHISurfaceHandle...)
+// for self-documenting signatures below - needs more thought, no compile-time safety gained.
+//
 // Backend interface the render graph calls into for all GPU operations.
 // The concrete implementation (e.g. VkRHIBackend) owns its IRHIAllocator internally.
 // The render graph stores one IRHIBackend* set via RenderGraph::setBackend().
@@ -31,4 +34,13 @@ struct IRHIBackend {
   // Pass framing - called by execute() around each pass executor. See issue #12.
   virtual void beginPass(void* cmdBuf, RHIPassType type) = 0;
   virtual void endPass(void* cmdBuf) = 0;
+
+  virtual void  createSwapChain(void* nativeSurface, u32 framebufferWidth, u32 framebufferHeight) = 0;
+  virtual void  beginFrame() = 0;
+  virtual void  endFrame() = 0;
+  virtual void* getCurrentCommandBuffer() const = 0;
+  virtual void* getCurrentSwapchainTarget() const = 0;
+  virtual void  getSwapchainExtent(u32& width, u32& height) const = 0;
+
+  virtual const void* getNativeHandles() const = 0;
 };

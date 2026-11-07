@@ -4,16 +4,23 @@
 #include <stdexcept>
 #include <vector>
 #include <cstring>
-#include <GLFW/glfw3.h>
+
+#if defined(_WIN32)
+#include <vulkan/vulkan_win32.h>
+#elif defined(__APPLE__)
+#include <vulkan/vulkan_metal.h>
+#elif defined(__linux__)
+#include <vulkan/vulkan_xcb.h>
+#endif
 
 const std::vector<const char*> validationLayers = {
   "VK_LAYER_KHRONOS_validation"
 };
 
 #ifdef NDEBUG
-  const bool enableValidationLayers = false;
+const bool enableValidationLayers = false;
 #else
-  const bool enableValidationLayers = true;
+const bool enableValidationLayers = true;
 #endif
 
 static VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger) {
@@ -48,16 +55,14 @@ static void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT&
   createInfo.pfnUserCallback = debugCallback;
 }
 
-VkRHIBackend::VkRHIBackend(GLFWwindow* window) {
+VkRHIBackend::VkRHIBackend() {
   createInstance();
   setupDebugMessenger();
 
-  if (glfwCreateWindowSurface(mInstance, window, nullptr, &m_Surface) != VK_SUCCESS) {
-    throw std::runtime_error("Failed to create window surface.");
-  }
-
   pickPhysicalDevice();
   createLogicalDevice();
+
+  mNativeHandles = { mInstance, mPhysicalDevice, mDevice, mGraphicsQueue, mGraphicsQueueFamily };
 
   mAllocator.init(mInstance, mPhysicalDevice, mDevice);
   std::cout << "[VkRHIBackend] Vulkan initialized successfully.\n";
@@ -147,10 +152,16 @@ void VkRHIBackend::createInstance() {
   createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   createInfo.pApplicationInfo = &appInfo;
 
-  uint32_t glfwExtensionCount = 0;
-  const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-  std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+  // WSI surface extensions are a compile-time choice on Windows/macOS. Linux is the exception
+  // (X11 vs Wayland is a runtime choice), so this list would need runtime detection there.
+  std::vector<const char*> extensions = { VK_KHR_SURFACE_EXTENSION_NAME };
+#if defined(_WIN32)
+  extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+#elif defined(__APPLE__)
+  extensions.push_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
+#elif defined(__linux__)
+  extensions.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+#endif
 
   if (enableValidationLayers) {
     extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -352,17 +363,11 @@ VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& avai
   return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, GLFWwindow* window) {
+VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, u32 framebufferWidth, u32 framebufferHeight) {
   if (capabilities.currentExtent.width != UINT32_MAX) {
     return capabilities.currentExtent;
   } else {
-    int width, height;
-    glfwGetFramebufferSize(window, &width, &height);
-
-    VkExtent2D actualExtent = {
-      static_cast<uint32_t>(width),
-      static_cast<uint32_t>(height)
-    };
+    VkExtent2D actualExtent = { framebufferWidth, framebufferHeight };
 
     actualExtent.width = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
     actualExtent.height = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
@@ -371,12 +376,14 @@ VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, GLFWwi
   }
 }
 
-void VkRHIBackend::createSwapChain(GLFWwindow* window) {
+void VkRHIBackend::createSwapChain(void* nativeSurface, u32 framebufferWidth, u32 framebufferHeight) {
+  m_Surface = static_cast<VkSurfaceKHR>(nativeSurface);
+
   SwapChainSupportDetails swapChainSupport = querySwapChainSupport(mPhysicalDevice, m_Surface);
 
   VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
   VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
-  VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities, window);
+  VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities, framebufferWidth, framebufferHeight);
 
   uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
   if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
@@ -431,6 +438,7 @@ void VkRHIBackend::createSwapChain(GLFWwindow* window) {
 
   m_SwapchainImageFormat = surfaceFormat.format;
   m_SwapchainExtent = extent;
+  mNativeHandles.swapchainColorFormat = surfaceFormat.format;
 }
 
 void VkRHIBackend::beginFrame() {
@@ -569,8 +577,8 @@ void VkRHIBackend::endFrame() {
   vkQueueWaitIdle(mGraphicsQueue);
 }
 
-VkImageView VkRHIBackend::getCurrentSwapchainImageView() const {
-  if (m_SwapchainImageViews.empty()) return VK_NULL_HANDLE;
+void* VkRHIBackend::getCurrentSwapchainTarget() const {
+  if (m_SwapchainImageViews.empty()) return nullptr;
   return m_SwapchainImageViews[m_CurrentImageIndex];
 }
 

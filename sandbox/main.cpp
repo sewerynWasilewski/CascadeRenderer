@@ -2,15 +2,12 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <cstdio>
+#include <stdexcept>
 
-#include <vector>
-
-#include "rg/RenderGraph.h"
+#include "renderer/renderer.h"
 #include "rhi/vulkan/VkRHIBackend.h"
-
+#include "app/debug_ui.h"
 #include <imgui.h>
-#include <backends/imgui_impl_glfw.h>
-#include <backends/imgui_impl_vulkan.h>
 
 int main() {
   glfwInit();
@@ -18,79 +15,39 @@ int main() {
   GLFWwindow* window = glfwCreateWindow(1280, 720, "Cascade Renderer - ImGui & Vulkan", nullptr, nullptr);
 
   {
-    VkRHIBackend rhiBackend(window);
-    rhiBackend.createSwapChain(window);
+    Renderer renderer;
+    renderer.init(RHIBackendType::Vulkan);
 
-    RenderGraph rg;
-    rg.setBackend(&rhiBackend);
+    auto* native = static_cast<const VkRHINativeHandles*>(renderer.getNativeHandles());
 
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    if (glfwCreateWindowSurface(native->instance, window, nullptr, &surface) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create window surface.");
+    }
 
-    ImGui_ImplGlfw_InitForVulkan(window, true);
+    int fbWidth, fbHeight;
+    glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+    renderer.createSwapChain(static_cast<void*>(surface), fbWidth, fbHeight);
 
-    VkFormat swapchainFormat = rhiBackend.getSwapchainImageFormat();
+    RenderGraph& rg = renderer.graph();
 
-    ImGui_ImplVulkan_InitInfo init_info = {};
-    init_info.Instance = rhiBackend.getInstance();
-    init_info.PhysicalDevice = rhiBackend.getPhysicalDevice();
-    init_info.Device = rhiBackend.getDevice();
-    init_info.QueueFamily = rhiBackend.getGraphicsQueueFamily();
-    init_info.Queue = rhiBackend.getGraphicsQueue();
-    init_info.DescriptorPoolSize = IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE;
-    init_info.MinImageCount = 2;
-    init_info.ImageCount = 3;
-    init_info.UseDynamicRendering = true;
-
-    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &swapchainFormat;
-
-    ImGui_ImplVulkan_Init(&init_info);
+    initDebugUI(renderer, window);
 
     uint64_t frameCount = 0;
 
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
 
-      rhiBackend.beginFrame();
+      renderer.beginFrame();
 
-      ImGui_ImplVulkan_NewFrame();
-      ImGui_ImplGlfw_NewFrame();
-      ImGui::NewFrame();
-
+      beginDebugUIFrame();
       ImGui::Begin("Cascade Renderer Debug");
-      ImGui::Text("FPS: %.1f", io.Framerate);
-      ImGui::Text("Frame: %lu", frameCount++);
+      ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+      ImGui::Text("Frame: %llu", frameCount++);
       ImGui::End();
+      renderDebugUI(renderer);
 
-      ImGui::Render();
-
-      VkCommandBuffer cmd = rhiBackend.getCurrentCommandBuffer();
-      VkImageView currentSwapchainImageView = rhiBackend.getCurrentSwapchainImageView(); 
-
-      VkRenderingAttachmentInfo colorAttachment{};
-      colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-      colorAttachment.imageView = currentSwapchainImageView;
-      colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-      colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-      colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-      colorAttachment.clearValue = { { 0.1f, 0.1f, 0.15f, 1.0f } };
-
-      VkRenderingInfo renderingInfo{};
-      renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-      renderingInfo.renderArea = { { 0, 0 }, rhiBackend.getSwapchainExtent() };
-      renderingInfo.layerCount = 1;
-      renderingInfo.colorAttachmentCount = 1;
-      renderingInfo.pColorAttachments = &colorAttachment;
-
-      vkCmdBeginRendering(cmd, &renderingInfo);
-      ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
-      vkCmdEndRendering(cmd);
-
-      rhiBackend.endFrame();
+      renderer.endFrame();
 
       RGResourceHandle color = rg.createImage("color", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
       RGResourceHandle depth = rg.createImage("depth", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
@@ -124,9 +81,7 @@ int main() {
 
     rg.dumpJSON("graph.json");
 
-    ImGui_ImplVulkan_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
+    shutdownDebugUI();
     }
 
     glfwDestroyWindow(window);
