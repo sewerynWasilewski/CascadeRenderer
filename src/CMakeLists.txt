@@ -4,7 +4,8 @@ set(RENDERER_SOURCES
 )
 
 if(Vulkan_FOUND)
-  list(APPEND RENDERER_SOURCES 
+  list(APPEND RENDERER_SOURCES
+    ../vendor/volk/volk.c
     rhi/vulkan/VkRHIAllocator.cpp
     rhi/vulkan/VkRHIBackend.cpp
     ../vendor/imgui/imgui.cpp
@@ -28,9 +29,20 @@ target_include_directories(renderer PUBLIC
 )
 
 if(Vulkan_FOUND)
-  target_include_directories(renderer PUBLIC ${VMA_INCLUDE_DIR})
-  target_link_libraries(renderer PUBLIC Vulkan::Vulkan)
-  target_compile_definitions(renderer PUBLIC RENDERER_VULKAN)
+  target_include_directories(renderer PUBLIC
+    ${VMA_INCLUDE_DIR}
+    ${Vulkan_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/volk
+  )
+  target_compile_definitions(renderer PUBLIC RENDERER_VULKAN IMGUI_IMPL_VULKAN_USE_VOLK)
+
+  if(WIN32)
+    target_compile_definitions(renderer PUBLIC VK_USE_PLATFORM_WIN32_KHR)
+  elseif(APPLE)
+    target_compile_definitions(renderer PUBLIC VK_USE_PLATFORM_METAL_EXT)
+  elseif(UNIX)
+    target_compile_definitions(renderer PUBLIC VK_USE_PLATFORM_XCB_KHR)
+  endif()
 endif()
 
 target_link_libraries(renderer PUBLIC glfw glm::glm)

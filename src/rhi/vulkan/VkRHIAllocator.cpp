@@ -1,7 +1,8 @@
+#include "VkRHIAllocator.h"
+
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
 
-#include "VkRHIAllocator.h"
 #include <stdexcept>
 #include <iostream>
 
@@ -17,6 +18,12 @@ void VkRHIAllocator::init(VkInstance instance, VkPhysicalDevice physicalDevice, 
   allocatorInfo.physicalDevice   = physicalDevice;
   allocatorInfo.device           = device;
   allocatorInfo.instance         = instance;
+
+  VmaVulkanFunctions vulkanFunctions{};
+  if (vmaImportVulkanFunctionsFromVolk(&allocatorInfo, &vulkanFunctions) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to import Vulkan functions into VMA via volk.");
+  }
+  allocatorInfo.pVulkanFunctions = &vulkanFunctions;
 
   if (vmaCreateAllocator(&allocatorInfo, &mAllocator) != VK_SUCCESS) {
     throw std::runtime_error("Failed to create VMA allocator.");

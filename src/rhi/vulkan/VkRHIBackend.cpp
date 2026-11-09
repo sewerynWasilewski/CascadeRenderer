@@ -5,14 +5,6 @@
 #include <vector>
 #include <cstring>
 
-#if defined(_WIN32)
-#include <vulkan/vulkan_win32.h>
-#elif defined(__APPLE__)
-#include <vulkan/vulkan_metal.h>
-#elif defined(__linux__)
-#include <vulkan/vulkan_xcb.h>
-#endif
-
 const std::vector<const char*> validationLayers = {
   "VK_LAYER_KHRONOS_validation"
 };
@@ -56,6 +48,10 @@ static void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT&
 }
 
 VkRHIBackend::VkRHIBackend() {
+  if (volkInitialize() != VK_SUCCESS) {
+    throw std::runtime_error("Failed to find the Vulkan loader on this system.");
+  }
+
   createInstance();
   setupDebugMessenger();
 
@@ -189,6 +185,8 @@ void VkRHIBackend::createInstance() {
   if (vkCreateInstance(&createInfo, nullptr, &mInstance) != VK_SUCCESS) {
     throw std::runtime_error("Failed to create Vulkan instance.");
   }
+
+  volkLoadInstance(mInstance);
 }
 void VkRHIBackend::setupDebugMessenger() {
   if (!enableValidationLayers) return;
@@ -312,6 +310,8 @@ void VkRHIBackend::createLogicalDevice() {
   if (vkCreateDevice(mPhysicalDevice, &createInfo, nullptr, &mDevice) != VK_SUCCESS) {
     throw std::runtime_error("Failed to create logical device.");
   }
+
+  volkLoadDevice(mDevice);
 
   vkGetDeviceQueue(mDevice, mGraphicsQueueFamily, 0, &mGraphicsQueue);
 }
