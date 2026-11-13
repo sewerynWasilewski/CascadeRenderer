@@ -1,8 +1,12 @@
 #pragma once
-#include "../gpu_types.h"
+#include "core/types.h"
+#include "rhi/types.h"
 
+// TO DO: consider named void* aliases (RHICommandBuffer, RHIResourceHandle, RHISurfaceHandle...)
+// for self-documenting signatures below - needs more thought, no compile-time safety gained.
+//
 // Backend interface the render graph calls into for all GPU operations.
-// The concrete implementation (e.g. VkRHIBackend) owns its IGPUAllocator internally.
+// The concrete implementation (e.g. VkRHIBackend) owns its IRHIAllocator internally.
 // The render graph stores one IRHIBackend* set via RenderGraph::setBackend().
 struct IRHIBackend {
   IRHIBackend() = default;
@@ -17,12 +21,12 @@ struct IRHIBackend {
 
   virtual RHIMemoryRequirements getMemoryRequirements(void* gpuHandle, RHIResourceKind kind) = 0;
 
-  virtual GPUMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) = 0;
-  virtual void           freePool(GPUMemoryBlock block) = 0;
+  virtual RHIMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) = 0;
+  virtual void           freePool(RHIMemoryBlock block) = 0;
 
   // Bind a GPU resource handle to a memory block at a given offset - called by allocate().
   // gpuHandle is VkImage/VkBuffer (or equivalent) cast to void*.
-  virtual void bindMemory(void* gpuHandle, GPUMemoryBlock block, u64 offset) = 0;
+  virtual void bindMemory(void* gpuHandle, RHIMemoryBlock block, u64 offset) = 0;
 
   // Emit a pipeline barrier before a pass - called by execute(). See issue #11.
   virtual void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) = 0;
@@ -30,4 +34,13 @@ struct IRHIBackend {
   // Pass framing - called by execute() around each pass executor. See issue #12.
   virtual void beginPass(void* cmdBuf, RHIPassType type) = 0;
   virtual void endPass(void* cmdBuf) = 0;
+
+  virtual void  createSwapChain(void* nativeSurface, u32 framebufferWidth, u32 framebufferHeight) = 0;
+  virtual void  beginFrame() = 0;
+  virtual void  endFrame() = 0;
+  virtual void* getCurrentCommandBuffer() const = 0;
+  virtual void* getCurrentSwapchainTarget() const = 0;
+  virtual void  getSwapchainExtent(u32& width, u32& height) const = 0;
+
+  virtual const void* getNativeHandles() const = 0;
 };

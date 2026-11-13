@@ -6,7 +6,7 @@
 #include <glm/glm.hpp>
 
 #include "camera.h"
-#include "gpu_types.h"
+#include "rhi/types.h"
 
 struct DirectionalLight {
   glm::vec3 direction{0.0f, -1.0f, 0.0f}; // direction the light travels

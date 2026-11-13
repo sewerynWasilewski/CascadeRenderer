@@ -1,31 +1,17 @@
+#include "renderer/renderer.h"
+#include "rhi/vulkan/VkRHIBackend.h"
+
+#define GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
 #include <cstdio>
+#include <stdexcept>
+
 #include "rg/RenderGraph.h"
 #include "renderer/model_loader.h"
 
-struct MockBackend final : IRHIBackend {
-  void* createImage(const RHITextureDesc&)            override { printf("  [backend] createImage\n");  return reinterpret_cast<void*>(0xDEAD); }
-  void* createBuffer(const RHIBufferDesc&)            override { printf("  [backend] createBuffer\n"); return reinterpret_cast<void*>(0xDEAD); }
-  void  destroyImage(void*)                           override { printf("  [backend] destroyImage\n"); }
-  void  destroyBuffer(void*)                          override { printf("  [backend] destroyBuffer\n"); }
-  RHIMemoryRequirements getMemoryRequirements(void*, RHIResourceKind) override { return {0, 1}; }
-  GPUMemoryBlock allocatePool(u64, RHIMemoryType)      override { return {}; }
-  void           freePool(GPUMemoryBlock)             override {}
-  void           bindMemory(void*, GPUMemoryBlock, u64) override {}
-  void           emitBarrier(const RHIBarrierInfo&, void*) override {}
-  void           beginPass(void*, RHIPassType)         override {}
-  void           endPass(void*)                       override {}
-};
-
-struct MockTexture {
-  struct Desc { uint32_t width, height; };
-
-  static void* createGPU(const Desc& d, IRHIBackend* backend) {
-    return backend->createImage(RHITextureDesc{d.width, d.height, 1, 1, 1});
-  }
-  static void destroyGPU(const Desc&, IRHIBackend* backend, void* handle) {
-    backend->destroyImage(handle);
-  }
-};
+#include "app/debug_ui.h"
+#include <imgui.h>
 
 int main(int argc, char** argv) {
   if (argc > 1) {
@@ -47,45 +33,82 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  MockBackend backend;
-  RenderGraph rg;
-  rg.setBackend(&backend);
+  glfwInit();
+  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+  GLFWwindow* window = glfwCreateWindow(1280, 720, "Cascade Renderer - ImGui & Vulkan", nullptr, nullptr);
 
-  for (int frame = 0; frame < 3; frame++) {
-    printf("\n=== frame %d ===\n", frame);
+  {
+    Renderer renderer;
+    renderer.init(RHIBackendType::Vulkan);
 
-    RGResourceHandle color = rg.create<MockTexture>("color", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
-    RGResourceHandle depth = rg.create<MockTexture>("depth", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
-    RGResourceHandle light = rg.create<MockTexture>("light", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, MockTexture::Desc{1280, 720});
+    auto* native = static_cast<const VkRHINativeHandles*>(renderer.getNativeHandles());
 
-    rg.addPass("GBuffer", RG_PASS_RASTER,
-      [&](RenderGraph::PassBuilder& b) {
-        color = b.write(color, RHI_USAGE_COLOR_ATTACHMENT);
-        depth = b.write(depth, RHI_USAGE_DEPTH_ATTACHMENT);
-      },
-      [](RGResources&, void*) {}
-    );
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    if (glfwCreateWindowSurface(native->instance, window, nullptr, &surface) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create window surface.");
+    }
 
-    rg.addPass("Lighting", RG_PASS_RASTER,
-      [&](RenderGraph::PassBuilder& b) {
-        b.read(color, RHI_USAGE_SAMPLED_TEXTURE);
-        b.read(depth, RHI_USAGE_SAMPLED_TEXTURE);
-        light = b.write(light, RHI_USAGE_COLOR_ATTACHMENT);
-      },
-      [](RGResources&, void*) {}
-    );
+    int fbWidth, fbHeight;
+    glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+    renderer.createSwapChain(static_cast<void*>(surface), fbWidth, fbHeight);
 
-    rg.addPass("Present", static_cast<RGPassFlags>(RG_PASS_RASTER | RG_PASS_NEVER_CULL),
-      [&](RenderGraph::PassBuilder& b) { b.read(light, RHI_USAGE_SAMPLED_TEXTURE); },
-      [](RGResources&, void*) {}
-    );
+    RenderGraph& rg = renderer.graph();
 
-    printf("  [compile]\n");
-    rg.compile();
-    printf("  [reset]\n");
-    rg.reset();
-  }
+    initDebugUI(renderer, window);
 
-  rg.dumpJSON("build/graph.json");
-  return 0;  // ~RenderGraph() calls destroy() -> pool.flush()
+    uint64_t frameCount = 0;
+
+    while (!glfwWindowShouldClose(window)) {
+      glfwPollEvents();
+
+      renderer.beginFrame();
+
+      beginDebugUIFrame();
+      ImGui::Begin("Cascade Renderer Debug");
+      ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+      ImGui::Text("Frame: %llu", frameCount++);
+      ImGui::End();
+      renderDebugUI(renderer);
+
+      renderer.endFrame();
+
+      RGResourceHandle color = rg.createImage("color", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
+      RGResourceHandle depth = rg.createImage("depth", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
+      RGResourceHandle light = rg.createImage("light", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
+
+      rg.addPass("GBuffer", RG_PASS_RASTER,
+        [&](RenderGraph::PassBuilder& b) {
+      color = b.write(color, RHI_USAGE_COLOR_ATTACHMENT);
+      depth = b.write(depth, RHI_USAGE_DEPTH_ATTACHMENT);
+        },
+        [](RGResources&, void*) {}
+      );
+
+      rg.addPass("Lighting", RG_PASS_RASTER,
+        [&](RenderGraph::PassBuilder& b) {
+      b.read(color, RHI_USAGE_SAMPLED_TEXTURE);
+      b.read(depth, RHI_USAGE_SAMPLED_TEXTURE);
+      light = b.write(light, RHI_USAGE_COLOR_ATTACHMENT);
+        },
+        [](RGResources&, void*) {}
+      );
+
+      rg.addPass("Present", static_cast<RGPassFlags>(RG_PASS_RASTER | RG_PASS_NEVER_CULL),
+        [&](RenderGraph::PassBuilder& b) { b.read(light, RHI_USAGE_SAMPLED_TEXTURE); },
+        [](RGResources&, void*) {}
+      );
+
+      rg.compile();
+      rg.reset();
+    }
+
+    rg.dumpJSON("graph.json");
+
+    shutdownDebugUI();
+    }
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
+
+    return 0;
 }

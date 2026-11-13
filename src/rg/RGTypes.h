@@ -1,5 +1,6 @@
 #pragma once
-#include "../gpu_types.h"
+#include "core/types.h"
+#include "rhi/types.h"
 
 // Opaque index into the graph's pass array. Returned by addPass, not versioned.
 struct RGPassHandle {
@@ -12,6 +13,7 @@ struct RGPassHandle {
 struct RGResourceHandle {
   u32  id      = RG_INVALID_ID;
   u32  version = 0;
+  u32  epoch   = 0;
   bool valid() const { return id != RG_INVALID_ID; }
 };
 
@@ -38,6 +40,7 @@ inline RHIQueueType rg_queue_from_flags(RGPassFlags f) {
 
 // Ownership model: transient resources are allocated by the graph; external ones are imported.
 enum RGResourceType : u32 {
-  RG_RESOURCE_TRANSIENT = 0,
-  RG_RESOURCE_EXTERNAL  = 1,
+  RG_RESOURCE_TRANSIENT  = 0,
+  RG_RESOURCE_EXTERNAL   = 1,
+  RG_RESOURCE_PERSISTENT = 2,
 };

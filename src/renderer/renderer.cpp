@@ -1,6 +1,29 @@
 #include "renderer.h"
+#include <stdexcept>
 
-#include "rg/RenderGraph.h"
+#ifdef RENDERER_VULKAN
+#include "rhi/vulkan/VkRHIBackend.h"
+#endif
+
+void Renderer::init(RHIBackendType type) {
+  switch (type) {
+#ifdef RENDERER_VULKAN
+    case RHIBackendType::Vulkan:
+      mBackend = std::make_unique<VkRHIBackend>();
+      break;
+#endif
+    default:
+      throw std::runtime_error("Requested RHIBackendType was not compiled into this build.");
+  }
+  mGraph.setBackend(mBackend.get());
+}
+
+void Renderer::createSwapChain(void* nativeSurface, u32 framebufferWidth, u32 framebufferHeight) {
+  mBackend->createSwapChain(nativeSurface, framebufferWidth, framebufferHeight);
+}
+
+void Renderer::beginFrame() { mBackend->beginFrame(); }
+void Renderer::endFrame()   { mBackend->endFrame(); }
 
 void Renderer::setBackbuffer(void* gpuHandle, u32 width, u32 height) {
   mBackbufferHandle = gpuHandle;
@@ -11,19 +34,15 @@ void Renderer::setBackbuffer(void* gpuHandle, u32 width, u32 height) {
 void Renderer::buildGraph(RenderGraph& rg, const Scene& scene) {
   (void)scene;
 
-  const Texture::Desc gbufferColorDesc{ .width = mWidth, .height = mHeight, .format = TextureFormat::RGBA8_UNORM };
-  const Texture::Desc gbufferNormalDesc{ .width = mWidth, .height = mHeight, .format = TextureFormat::RGBA16_SFLOAT };
-  const Texture::Desc gbufferDepthDesc{ .width = mWidth, .height = mHeight, .format = TextureFormat::D32_SFLOAT };
-  const Texture::Desc hdrDesc{ .width = mWidth, .height = mHeight, .format = TextureFormat::RGBA16_SFLOAT };
+  // RHITextureDesc has no format yet, so every graph image uses the same placeholder desc.
+  const RHITextureDesc colorDesc{ mWidth, mHeight, 1, 1, 1 };
 
-  RGResourceHandle gbufferAlbedo = rg.create<Texture>("gbuffer_albedo", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, gbufferColorDesc);
-  RGResourceHandle gbufferNormal = rg.create<Texture>("gbuffer_normal", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, gbufferNormalDesc);
-  RGResourceHandle gbufferDepth  = rg.create<Texture>("gbuffer_depth",  RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, gbufferDepthDesc);
-  RGResourceHandle hdrColor      = rg.create<Texture>("hdr_color",      RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, hdrDesc);
+  RGResourceHandle gbufferAlbedo = rg.createImage("gbuffer_albedo", RHI_MEMORY_GPU_ONLY, colorDesc);
+  RGResourceHandle gbufferNormal = rg.createImage("gbuffer_normal", RHI_MEMORY_GPU_ONLY, colorDesc);
+  RGResourceHandle gbufferDepth  = rg.createImage("gbuffer_depth",  RHI_MEMORY_GPU_ONLY, colorDesc);
+  RGResourceHandle hdrColor      = rg.createImage("hdr_color",      RHI_MEMORY_GPU_ONLY, colorDesc);
 
-  RGResourceHandle backbuffer = rg.import<Texture>(
-    "backbuffer", RHI_RESOURCE_TEXTURE, RHI_MEMORY_GPU_ONLY, gbufferColorDesc,
-    Texture{}, mBackbufferHandle);
+  RGResourceHandle backbuffer = rg.importImage("backbuffer", RHI_MEMORY_GPU_ONLY, colorDesc, mBackbufferHandle);
 
   rg.addPass("GBuffer", RG_PASS_RASTER,
     [&](RenderGraph::PassBuilder& b) {
@@ -43,9 +62,7 @@ void Renderer::buildGraph(RenderGraph& rg, const Scene& scene) {
       hdrColor = b.write(hdrColor, RHI_USAGE_COLOR_ATTACHMENT);
     },
     [](RGResources&, void*) {
-      
     });
-
 
   rg.addPass("Present", RG_PASS_RASTER | RG_PASS_NEVER_CULL,
     [&](RenderGraph::PassBuilder& b) {
@@ -53,6 +70,5 @@ void Renderer::buildGraph(RenderGraph& rg, const Scene& scene) {
       backbuffer = b.write(backbuffer, RHI_USAGE_COLOR_ATTACHMENT);
     },
     [](RGResources&, void*) {
-      
     });
 }

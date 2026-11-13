@@ -1,5 +1,4 @@
 #pragma once
-#include "gpu_types.h"
 #include "rhi/IRHIBackend.h"
 
 enum class TextureFormat : u32 {
