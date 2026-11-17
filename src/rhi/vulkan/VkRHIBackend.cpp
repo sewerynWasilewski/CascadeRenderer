@@ -5,6 +5,8 @@
 #include <vector>
 #include <cstring>
 
+#include <GLFW/glfw3.h>
+
 const std::vector<const char*> validationLayers = {
   "VK_LAYER_KHRONOS_validation"
 };
@@ -148,9 +150,20 @@ void VkRHIBackend::createInstance() {
   createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   createInfo.pApplicationInfo = &appInfo;
 
+  uint32_t glfwExtensionCount = 0;
+  const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+  if (!glfwExtensions) {
+    throw std::runtime_error("Failed to find GLFW required instance extensions. Is GLFW initialized?");
+  }
+
   // WSI surface extensions are a compile-time choice on Windows/macOS. Linux is the exception
   // (X11 vs Wayland is a runtime choice), so this list would need runtime detection there.
-  std::vector<const char*> extensions = { VK_KHR_SURFACE_EXTENSION_NAME };
+  std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+
+  if (enableValidationLayers) {
+    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  }
+
 #if defined(_WIN32)
   extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
 #elif defined(__APPLE__)
@@ -582,14 +595,237 @@ void* VkRHIBackend::getCurrentSwapchainTarget() const {
   return m_SwapchainImageViews[m_CurrentImageIndex];
 }
 
-void* VkRHIBackend::createImage(const RHITextureDesc& desc) { return nullptr; }
-void* VkRHIBackend::createBuffer(const RHIBufferDesc& desc) { return nullptr; }
-void  VkRHIBackend::destroyImage(void* handle) {}
-void  VkRHIBackend::destroyBuffer(void* handle) {}
-RHIMemoryRequirements VkRHIBackend::getMemoryRequirements(void* gpuHandle, RHIResourceKind kind) { return { 0, 1 }; }
-RHIMemoryBlock VkRHIBackend::allocatePool(u64 size, RHIMemoryType memoryType) { return mAllocator.allocate(size, memoryType); }
-void VkRHIBackend::freePool(RHIMemoryBlock block) { mAllocator.free(block); }
-void VkRHIBackend::bindMemory(void* gpuHandle, RHIMemoryBlock block, u64 offset) {}
-void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {}
-void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type) {}
-void VkRHIBackend::endPass(void* cmdBuf) {}
+void* VkRHIBackend::createImage(const RHITextureDesc& desc) {
+  VkImageCreateInfo imageInfo{};
+  imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageInfo.extent.width = desc.width;
+  imageInfo.extent.height = desc.height;
+  imageInfo.extent.depth = desc.depth > 0 ? desc.depth : 1;
+  imageInfo.mipLevels = desc.mipLevels > 0 ? desc.mipLevels : 1;
+  imageInfo.arrayLayers = desc.arrayLayers > 0 ? desc.arrayLayers : 1;
+  
+  VkFormat vkFormat = VK_FORMAT_R8G8B8A8_UNORM;
+  if (desc.format == RHI_FORMAT_RGBA8_UNORM)      vkFormat = VK_FORMAT_R8G8B8A8_UNORM;
+  else if (desc.format == RHI_FORMAT_BGRA8_SRGB)   vkFormat = VK_FORMAT_B8G8R8A8_SRGB;
+  else if (desc.format == RHI_FORMAT_RGBA16_FLOAT) vkFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+  else if (desc.format == RHI_FORMAT_D32_FLOAT)    vkFormat = VK_FORMAT_D32_SFLOAT;
+
+  imageInfo.format = vkFormat;
+  imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  
+  VkImageUsageFlags usageFlags = 0;
+  if ((desc.usage & RHI_USAGE_COLOR_ATTACHMENT) != 0)  usageFlags |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  if ((desc.usage & RHI_USAGE_DEPTH_ATTACHMENT) != 0)  usageFlags |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+  if ((desc.usage & RHI_USAGE_SAMPLED_TEXTURE) != 0)   usageFlags |= VK_IMAGE_USAGE_SAMPLED_BIT;
+  if ((desc.usage & RHI_USAGE_STORAGE_TEXTURE) != 0)   usageFlags |= VK_IMAGE_USAGE_STORAGE_BIT;
+  if ((desc.usage & RHI_USAGE_TRANSFER_SRC) != 0)      usageFlags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  if ((desc.usage & RHI_USAGE_TRANSFER_DST) != 0)      usageFlags |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+  if (usageFlags == 0) {
+    usageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  }
+
+  imageInfo.usage = usageFlags;
+  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  VkImage image = VK_NULL_HANDLE;
+  if (vkCreateImage(mDevice, &imageInfo, nullptr, &image) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create Vulkan image.");
+  }
+
+  return static_cast<void*>(image);
+}
+
+void* VkRHIBackend::createBuffer(const RHIBufferDesc& desc) {
+  VkBufferCreateInfo bufferInfo{};
+  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufferInfo.size = desc.size;
+
+  VkBufferUsageFlags usageFlags = 0;
+  if ((desc.usage & RHI_USAGE_VERTEX_BUFFER) != 0)  usageFlags |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  if ((desc.usage & RHI_USAGE_INDEX_BUFFER) != 0)   usageFlags |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+  if ((desc.usage & RHI_USAGE_UNIFORM_BUFFER) != 0) usageFlags |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+  if ((desc.usage & RHI_USAGE_TRANSFER_SRC) != 0)   usageFlags |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  if ((desc.usage & RHI_USAGE_TRANSFER_DST) != 0)   usageFlags |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+  if (usageFlags == 0) {
+    usageFlags = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | 
+                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+  }
+
+  bufferInfo.usage = usageFlags;
+  bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  VkBuffer buffer = VK_NULL_HANDLE;
+  if (vkCreateBuffer(mDevice, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create Vulkan buffer.");
+  }
+
+  return static_cast<void*>(buffer);
+}
+
+void  VkRHIBackend::destroyImage(void* handle) {
+  if (handle != nullptr) {
+    VkImage image = static_cast<VkImage>(handle);
+    vkDestroyImage(mDevice, image, nullptr);
+  }
+}
+
+void  VkRHIBackend::destroyBuffer(void* handle) {
+  if (handle != nullptr) {
+    VkBuffer buffer = static_cast<VkBuffer>(handle);
+    vkDestroyBuffer(mDevice, buffer, nullptr);
+  }
+}
+
+RHIMemoryRequirements VkRHIBackend::getMemoryRequirements(void* gpuHandle, RHIResourceKind kind) {
+  VkMemoryRequirements memRequirements{};  
+
+  if (kind == RHI_RESOURCE_BUFFER) {
+    VkBuffer buffer = static_cast<VkBuffer>(gpuHandle);
+    vkGetBufferMemoryRequirements(mDevice, buffer, &memRequirements);
+  } else if (kind == RHI_RESOURCE_TEXTURE) {
+    VkImage image = static_cast<VkImage>(gpuHandle);
+    vkGetImageMemoryRequirements(mDevice, image, &memRequirements);
+  }
+
+  return RHIMemoryRequirements{ memRequirements.size, memRequirements.alignment };
+}
+
+RHIMemoryBlock VkRHIBackend::allocatePool(u64 size, RHIMemoryType memoryType) {
+  return mAllocator.allocate(size, memoryType);
+}
+
+void VkRHIBackend::freePool(RHIMemoryBlock block) {
+  mAllocator.free(block);
+}
+
+void VkRHIBackend::bindMemory(void* gpuHandle, RHIMemoryBlock block, u64 offset) {
+  VkDeviceMemory memory = static_cast<VkDeviceMemory>(block.handle);
+
+  VkBuffer buffer = static_cast<VkBuffer>(gpuHandle);
+  if (vkBindBufferMemory(mDevice, buffer, memory, offset) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to bind buffer memory.");
+  }
+}
+
+void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  if (commandBuffer == VK_NULL_HANDLE) {
+    commandBuffer = m_CommandBuffer;
+  }
+
+  auto getStageFlags = [](RHIUsage usage) -> VkPipelineStageFlags2 {
+    VkPipelineStageFlags2 flags = 0;
+    if ((usage & (RHI_USAGE_VERTEX_BUFFER | RHI_USAGE_INDEX_BUFFER)) != 0) flags |= VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT;
+    if ((usage & RHI_USAGE_UNIFORM_BUFFER) != 0) flags |= VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    if ((usage & RHI_USAGE_COLOR_ATTACHMENT) != 0) flags |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    if ((usage & RHI_USAGE_DEPTH_ATTACHMENT) != 0) flags |= VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    if ((usage & (RHI_USAGE_SAMPLED_TEXTURE | RHI_USAGE_STORAGE_TEXTURE)) != 0) flags |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    if ((usage & (RHI_USAGE_TRANSFER_SRC | RHI_USAGE_TRANSFER_DST)) != 0) flags |= VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    return flags != 0 ? flags : VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  };
+
+  auto getAccessFlags = [](RHIUsage usage) -> VkAccessFlags2 {
+    VkAccessFlags2 flags = 0;
+    if ((usage & RHI_USAGE_VERTEX_BUFFER) != 0) flags |= VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT;
+    if ((usage & RHI_USAGE_INDEX_BUFFER) != 0) flags |= VK_ACCESS_2_INDEX_READ_BIT;
+    if ((usage & RHI_USAGE_UNIFORM_BUFFER) != 0) flags |= VK_ACCESS_2_UNIFORM_READ_BIT;
+    if ((usage & RHI_USAGE_COLOR_ATTACHMENT) != 0) flags |= VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT;
+    if ((usage & RHI_USAGE_DEPTH_ATTACHMENT) != 0) flags |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    if ((usage & RHI_USAGE_SAMPLED_TEXTURE) != 0) flags |= VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+    if ((usage & RHI_USAGE_STORAGE_TEXTURE) != 0) flags |= VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+    if ((usage & RHI_USAGE_TRANSFER_SRC) != 0) flags |= VK_ACCESS_2_TRANSFER_READ_BIT;
+    if ((usage & RHI_USAGE_TRANSFER_DST) != 0) flags |= VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    return flags;
+  };
+
+  if (info.resource_kind == RHI_RESOURCE_TEXTURE && info.handle != nullptr) {
+    VkImageMemoryBarrier2 imageBarrier{};
+    imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    
+    imageBarrier.srcStageMask = getStageFlags(info.before_usage);
+    imageBarrier.srcAccessMask = getAccessFlags(info.before_usage);
+    imageBarrier.dstStageMask = getStageFlags(info.after_usage);
+    imageBarrier.dstAccessMask = getAccessFlags(info.after_usage);
+
+    imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+    imageBarrier.image = static_cast<VkImage>(info.handle);
+    
+    imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    imageBarrier.subresourceRange.baseMipLevel = 0;
+    imageBarrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
+    imageBarrier.subresourceRange.baseArrayLayer = 0;
+    imageBarrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+    VkDependencyInfo dependencyInfo{};
+    dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependencyInfo.imageMemoryBarrierCount = 1;
+    dependencyInfo.pImageMemoryBarriers = &imageBarrier;
+
+    vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
+  }
+  else if (info.resource_kind == RHI_RESOURCE_BUFFER && info.handle != nullptr) {
+    VkBufferMemoryBarrier2 bufferBarrier{};
+    bufferBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+    bufferBarrier.srcStageMask = getStageFlags(info.before_usage);
+    bufferBarrier.srcAccessMask = getAccessFlags(info.before_usage);
+    bufferBarrier.dstStageMask = getStageFlags(info.after_usage);
+    bufferBarrier.dstAccessMask = getAccessFlags(info.after_usage);
+    bufferBarrier.buffer = static_cast<VkBuffer>(info.handle);
+    bufferBarrier.offset = 0;
+    bufferBarrier.size = VK_WHOLE_SIZE;
+
+    VkDependencyInfo dependencyInfo{};
+    dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependencyInfo.bufferMemoryBarrierCount = 1;
+    dependencyInfo.pBufferMemoryBarriers = &bufferBarrier;
+
+    vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
+  }
+}
+
+void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  if (commandBuffer == VK_NULL_HANDLE) {
+    commandBuffer = m_CommandBuffer;
+  }
+
+  if (type == RHI_PASS_RASTER) {
+    if (m_SwapchainImageViews.empty()) return;
+
+    VkRenderingAttachmentInfo colorAttachment{};
+    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    colorAttachment.imageView = m_SwapchainImageViews[m_CurrentImageIndex];
+    colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.clearValue = { {0.05f, 0.05f, 0.08f, 1.0f} };
+
+    VkRenderingInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    renderingInfo.renderArea.offset = { 0, 0 };
+    renderingInfo.renderArea.extent = m_SwapchainExtent;
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachment;
+
+    vkCmdBeginRendering(commandBuffer, &renderingInfo);
+  }
+}
+void VkRHIBackend::endPass(void* cmdBuf) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  if (commandBuffer == VK_NULL_HANDLE) {
+    commandBuffer = m_CommandBuffer;
+  }
+
+  vkCmdEndRendering(commandBuffer);
+}

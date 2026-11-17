@@ -84,16 +84,27 @@ struct RHIBarrierInfo {
   RHIQueueType    dst_queue;
 };
 
+enum RHIFormat : u32 {
+  RHI_FORMAT_UNDEFINED = 0,
+  RHI_FORMAT_RGBA8_UNORM,
+  RHI_FORMAT_BGRA8_SRGB,
+  RHI_FORMAT_RGBA16_FLOAT,
+  RHI_FORMAT_D32_FLOAT,
+};
+
 struct RHITextureDesc {
   u32 width;
   u32 height;
   u32 depth;
   u32 mipLevels;
   u32 arrayLayers;
+  RHIFormat format = RHI_FORMAT_RGBA8_UNORM;
+  u32 usage = 0;
 };
 
 struct RHIBufferDesc {
   u64 size;
+  u32 usage = 0;
 };
 
 struct RHIMemoryRequirements {
