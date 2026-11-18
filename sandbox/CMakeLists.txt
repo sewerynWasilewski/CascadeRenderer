@@ -7,3 +7,5 @@ target_link_libraries(sandbox PRIVATE
     renderer
     glfw
 )
+
+target_link_libraries(sandbox PRIVATE renderer)

@@ -26,7 +26,7 @@ struct IRHIBackend {
 
   // Bind a GPU resource handle to a memory block at a given offset - called by allocate().
   // gpuHandle is VkImage/VkBuffer (or equivalent) cast to void*.
-  virtual void bindMemory(void* gpuHandle, RHIMemoryBlock block, u64 offset) = 0;
+  virtual void bindMemory(void* gpuHandle, RHIResourceKind kind, RHIMemoryBlock block, u64 offset) = 0;
 
   // Emit a pipeline barrier before a pass - called by execute(). See issue #11.
   virtual void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) = 0;
