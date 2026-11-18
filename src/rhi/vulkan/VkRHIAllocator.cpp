@@ -57,7 +57,8 @@ RHIMemoryBlock VkRHIAllocator::allocate(u64 size, RHIMemoryType memoryType) {
   memReq.memoryTypeBits = 0xFFFFFFFF;
 
   VmaAllocationCreateInfo allocCreateInfo{};
-  allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO;
+  // AUTO needs buffer/image usage info (vmaCreateBuffer/Image) that raw vmaAllocateMemory lacks.
+  allocCreateInfo.usage = VMA_MEMORY_USAGE_UNKNOWN;
 
   switch (memoryType) {
     case RHI_MEMORY_GPU_ONLY:
