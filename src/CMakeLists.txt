@@ -3,6 +3,7 @@ set(RENDERER_SOURCES
   renderer/frame_constants.cpp
   renderer/model_loader.cpp
   renderer/renderer.cpp
+  renderer/shader_loader.cpp
   rg/RenderGraph.cpp
 )
 

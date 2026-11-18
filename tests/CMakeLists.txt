@@ -3,6 +3,7 @@ add_executable(rg_tests
     test_frame_constants.cpp
     test_model_loader.cpp
     test_renderer_graph.cpp
+    test_shader_loader.cpp
 )
 
 target_link_libraries(rg_tests PRIVATE renderer)
