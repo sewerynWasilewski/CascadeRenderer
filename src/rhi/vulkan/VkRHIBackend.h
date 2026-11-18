@@ -29,7 +29,7 @@ public:
   RHIMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) override;
   void           freePool(RHIMemoryBlock block) override;
 
-  void bindMemory(void* gpuHandle, RHIMemoryBlock block, u64 offset) override;
+  void bindMemory(void* gpuHandle, RHIResourceKind kind, RHIMemoryBlock block, u64 offset) override;
   void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) override;
   void beginPass(void* cmdBuf, RHIPassType type) override;
   void endPass(void* cmdBuf) override;
