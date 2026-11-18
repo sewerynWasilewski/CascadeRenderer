@@ -692,16 +692,22 @@ void VkRHIBackend::freePool(RHIMemoryBlock block) {
 }
 
 void VkRHIBackend::bindMemory(void* gpuHandle, RHIResourceKind kind, RHIMemoryBlock block, u64 offset) {
-  VkDeviceMemory memory = static_cast<VkDeviceMemory>(block.handle);
+  // block.handle is a VmaAllocation*, not a VkDeviceMemory - look up the real backing
+  // memory (and VMA's own base offset into it) via the allocator.
+  const VkRHIAllocator::AllocationDetails* details = mAllocator.getAllocationDetails(block.id);
+  if (!details) {
+    throw std::runtime_error("bindMemory: unknown memory block id.");
+  }
+  const VkDeviceSize absoluteOffset = details->baseOffset + offset;
 
   if (kind == RHI_RESOURCE_TEXTURE) {
     VkImage image = static_cast<VkImage>(gpuHandle);
-    if (vkBindImageMemory(mDevice, image, memory, offset) != VK_SUCCESS) {
+    if (vkBindImageMemory(mDevice, image, details->deviceMemory, absoluteOffset) != VK_SUCCESS) {
       throw std::runtime_error("Failed to bind image memory.");
     }
   } else {
     VkBuffer buffer = static_cast<VkBuffer>(gpuHandle);
-    if (vkBindBufferMemory(mDevice, buffer, memory, offset) != VK_SUCCESS) {
+    if (vkBindBufferMemory(mDevice, buffer, details->deviceMemory, absoluteOffset) != VK_SUCCESS) {
       throw std::runtime_error("Failed to bind buffer memory.");
     }
   }
