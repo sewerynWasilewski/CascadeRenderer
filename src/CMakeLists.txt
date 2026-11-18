@@ -1,5 +1,6 @@
 set(RENDERER_SOURCES
   renderer/camera.cpp
+  renderer/frame_constants.cpp
   renderer/model_loader.cpp
   renderer/renderer.cpp
   rg/RenderGraph.cpp
