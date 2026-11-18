@@ -5,8 +5,6 @@
 #include <vector>
 #include <cstring>
 
-#include <GLFW/glfw3.h>
-
 const std::vector<const char*> validationLayers = {
   "VK_LAYER_KHRONOS_validation"
 };
@@ -150,15 +148,9 @@ void VkRHIBackend::createInstance() {
   createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   createInfo.pApplicationInfo = &appInfo;
 
-  uint32_t glfwExtensionCount = 0;
-  const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-  if (!glfwExtensions) {
-    throw std::runtime_error("Failed to find GLFW required instance extensions. Is GLFW initialized?");
-  }
-
   // WSI surface extensions are a compile-time choice on Windows/macOS. Linux is the exception
   // (X11 vs Wayland is a runtime choice), so this list would need runtime detection there.
-  std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+  std::vector<const char*> extensions = { VK_KHR_SURFACE_EXTENSION_NAME };
 
   if (enableValidationLayers) {
     extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -171,10 +163,6 @@ void VkRHIBackend::createInstance() {
 #elif defined(__linux__)
   extensions.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
 #endif
-
-  if (enableValidationLayers) {
-    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-  }
 
 #ifdef __APPLE__
   extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
