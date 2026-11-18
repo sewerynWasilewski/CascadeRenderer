@@ -34,15 +34,22 @@ void Renderer::setBackbuffer(void* gpuHandle, u32 width, u32 height) {
 void Renderer::buildGraph(RenderGraph& rg, const Scene& scene) {
   (void)scene;
 
-  // RHITextureDesc has no format yet, so every graph image uses the same placeholder desc.
-  const RHITextureDesc colorDesc{ mWidth, mHeight, 1, 1, 1 };
+  constexpr u32 kSampledColor = static_cast<u32>(RHI_USAGE_COLOR_ATTACHMENT | RHI_USAGE_SAMPLED_TEXTURE);
+  constexpr u32 kSampledDepth = static_cast<u32>(RHI_USAGE_DEPTH_ATTACHMENT | RHI_USAGE_SAMPLED_TEXTURE);
+  constexpr u32 kColorOnly    = static_cast<u32>(RHI_USAGE_COLOR_ATTACHMENT);
 
-  RGResourceHandle gbufferAlbedo = rg.createImage("gbuffer_albedo", RHI_MEMORY_GPU_ONLY, colorDesc);
-  RGResourceHandle gbufferNormal = rg.createImage("gbuffer_normal", RHI_MEMORY_GPU_ONLY, colorDesc);
-  RGResourceHandle gbufferDepth  = rg.createImage("gbuffer_depth",  RHI_MEMORY_GPU_ONLY, colorDesc);
-  RGResourceHandle hdrColor      = rg.createImage("hdr_color",      RHI_MEMORY_GPU_ONLY, colorDesc);
+  const RHITextureDesc albedoDesc  { mWidth, mHeight, 1, 1, 1, RHI_FORMAT_RGBA8_UNORM,   kSampledColor };
+  const RHITextureDesc normalDesc  { mWidth, mHeight, 1, 1, 1, RHI_FORMAT_RGBA16_FLOAT,  kSampledColor };
+  const RHITextureDesc depthDesc   { mWidth, mHeight, 1, 1, 1, RHI_FORMAT_D32_FLOAT,     kSampledDepth };
+  const RHITextureDesc hdrDesc     { mWidth, mHeight, 1, 1, 1, RHI_FORMAT_RGBA16_FLOAT,  kSampledColor };
+  const RHITextureDesc backbufferDesc{ mWidth, mHeight, 1, 1, 1, RHI_FORMAT_RGBA8_UNORM, kColorOnly };
 
-  RGResourceHandle backbuffer = rg.importImage("backbuffer", RHI_MEMORY_GPU_ONLY, colorDesc, mBackbufferHandle);
+  RGResourceHandle gbufferAlbedo = rg.createImage("gbuffer_albedo", RHI_MEMORY_GPU_ONLY, albedoDesc);
+  RGResourceHandle gbufferNormal = rg.createImage("gbuffer_normal", RHI_MEMORY_GPU_ONLY, normalDesc);
+  RGResourceHandle gbufferDepth  = rg.createImage("gbuffer_depth",  RHI_MEMORY_GPU_ONLY, depthDesc);
+  RGResourceHandle hdrColor      = rg.createImage("hdr_color",      RHI_MEMORY_GPU_ONLY, hdrDesc);
+
+  RGResourceHandle backbuffer = rg.importImage("backbuffer", RHI_MEMORY_GPU_ONLY, backbufferDesc, mBackbufferHandle);
 
   rg.addPass("GBuffer", RG_PASS_RASTER,
     [&](RenderGraph::PassBuilder& b) {
