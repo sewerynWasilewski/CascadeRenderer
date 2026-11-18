@@ -691,12 +691,19 @@ void VkRHIBackend::freePool(RHIMemoryBlock block) {
   mAllocator.free(block);
 }
 
-void VkRHIBackend::bindMemory(void* gpuHandle, RHIMemoryBlock block, u64 offset) {
+void VkRHIBackend::bindMemory(void* gpuHandle, RHIResourceKind kind, RHIMemoryBlock block, u64 offset) {
   VkDeviceMemory memory = static_cast<VkDeviceMemory>(block.handle);
 
-  VkBuffer buffer = static_cast<VkBuffer>(gpuHandle);
-  if (vkBindBufferMemory(mDevice, buffer, memory, offset) != VK_SUCCESS) {
-    throw std::runtime_error("Failed to bind buffer memory.");
+  if (kind == RHI_RESOURCE_TEXTURE) {
+    VkImage image = static_cast<VkImage>(gpuHandle);
+    if (vkBindImageMemory(mDevice, image, memory, offset) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to bind image memory.");
+    }
+  } else {
+    VkBuffer buffer = static_cast<VkBuffer>(gpuHandle);
+    if (vkBindBufferMemory(mDevice, buffer, memory, offset) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to bind buffer memory.");
+    }
   }
 }
 

@@ -463,7 +463,7 @@ void RenderGraph::allocate() {
 
       destroyRHIHandle(i);
       createRHIHandle(i);
-      mBackend->bindMemory(mGPUHandles[i], mMemoryPools[memType], mResources[i].physical_range.offset); 
+      mBackend->bindMemory(mGPUHandles[i], mResources[i].kind, mMemoryPools[memType], mResources[i].physical_range.offset);
     }
 
     // Generate Aliasing Barriers
