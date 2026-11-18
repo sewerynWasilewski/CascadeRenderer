@@ -84,7 +84,7 @@ struct RHIBarrierInfo {
   RHIQueueType    dst_queue;
 };
 
-enum RHIFormat : u32 {
+enum RHITextureFormat : u32 {
   RHI_FORMAT_UNDEFINED = 0,
   RHI_FORMAT_RGBA8_UNORM,
   RHI_FORMAT_BGRA8_SRGB,
@@ -98,7 +98,7 @@ struct RHITextureDesc {
   u32 depth;
   u32 mipLevels;
   u32 arrayLayers;
-  RHIFormat format = RHI_FORMAT_RGBA8_UNORM;
+  RHITextureFormat format = RHI_FORMAT_RGBA8_UNORM;
   u32 usage = 0;
 };
 
