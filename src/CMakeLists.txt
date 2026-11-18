@@ -1,4 +1,6 @@
 set(RENDERER_SOURCES
+  renderer/camera.cpp
+  renderer/model_loader.cpp
   renderer/renderer.cpp
   rg/RenderGraph.cpp
 )
@@ -28,6 +30,8 @@ target_include_directories(renderer PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/glfw/include
 )
 
+target_include_directories(renderer PRIVATE ${TINYOBJLOADER_INCLUDE_DIR})
+
 if(Vulkan_FOUND)
   target_include_directories(renderer PUBLIC
     ${VMA_INCLUDE_DIR}
@@ -46,3 +50,8 @@ if(Vulkan_FOUND)
 endif()
 
 target_link_libraries(renderer PUBLIC glfw glm::glm)
+
+target_compile_definitions(renderer PUBLIC
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    GLM_FORCE_RADIANS
+)
