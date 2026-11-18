@@ -67,6 +67,7 @@ public:
   const std::vector<u32>& sortedPasses()   const { return mSortedPasses; }
   const std::vector<RGEdge>& edges()       const { return mEdges; }
   const std::vector<RGBarrier>& barriers() const { return mBarriers; }
+  const std::vector<RGResourceData>& resources() const { return mResources; }
 #endif
 
   void compile(); 
