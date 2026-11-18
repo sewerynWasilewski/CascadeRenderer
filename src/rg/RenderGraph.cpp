@@ -571,7 +571,9 @@ void RenderGraph::dumpJSON(const char* path) const {
     id_or_null(r.first_pass);
     fprintf(f, ",\"last_pass\":");
     id_or_null(r.last_pass);
-    fprintf(f, "}%s\n", i + 1 < mResources.size() ? "," : "");
+    fprintf(f, ",\"offset\":%llu,\"size\":%llu}%s\n",
+      (unsigned long long)r.physical_range.offset, (unsigned long long)r.physical_range.size,
+      i + 1 < mResources.size() ? "," : "");
   }
   fprintf(f, "  ],\n");
 
