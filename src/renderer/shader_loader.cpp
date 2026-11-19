@@ -3,7 +3,6 @@
 #include <fstream>
 
 namespace {
-// SPIR-V modules start with this magic word in little-endian byte order.
 constexpr u32 kSpirvMagic = 0x07230203u;
 }
 

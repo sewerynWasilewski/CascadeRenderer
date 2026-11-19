@@ -58,7 +58,7 @@ void Renderer::buildGraph(RenderGraph& rg, const Scene& scene) {
       gbufferDepth  = b.write(gbufferDepth,  RHI_USAGE_DEPTH_ATTACHMENT);
     },
     [](RGResources&, void*) {
-      // Sprint 3/4: bind GBuffer pipeline, draw scene.meshes with MVP push constants.
+        
     });
 
   rg.addPass("Lighting", RG_PASS_RASTER,

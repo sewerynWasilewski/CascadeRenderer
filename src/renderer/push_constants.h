@@ -4,8 +4,6 @@
 
 #include <glm/glm.hpp>
 
-// Byte-compatible with the push_constant blocks in:
-//   shaders/gbuffer.vert, shaders/lighting.frag, shaders/present.frag
 struct GbufferPC {
   glm::mat4 mvp;
   glm::mat4 model;

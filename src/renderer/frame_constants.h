@@ -6,7 +6,6 @@
 #include "push_constants.h"
 #include "scene.h"
 
-// One indexed draw for the GBuffer pass: the mesh range plus its transforms.
 struct MeshDraw {
   glm::mat4 mvp;
   glm::mat4 model;
