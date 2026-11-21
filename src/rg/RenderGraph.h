@@ -142,7 +142,8 @@ public:
   RGResources& operator=(const RGResources&) = delete;
   RGResources& operator=(RGResources&&) noexcept = delete;
 
-  void* get(RGResourceHandle handle); 
+  void* get(RGResourceHandle handle);
+  IRHIBackend* getBackend();
 
 private:
   explicit RGResources(RenderGraph& rg) : mRG(rg) {}

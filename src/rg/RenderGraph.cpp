@@ -96,6 +96,10 @@ void* RGResources::get(RGResourceHandle handle) {
   return mRG.mGPUHandles[handle.id];
 }
 
+IRHIBackend* RGResources::getBackend() { 
+  assert(mRG.mBackend && "Backend Is not set");
+  return mRG.mBackend;
+}
 
 bool RenderGraph::isValid(RGResourceHandle handle) const {
   if (!handle.valid()) return false;
