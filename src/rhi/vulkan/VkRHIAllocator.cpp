@@ -109,11 +109,7 @@ void VkRHIAllocator::free(RHIMemoryBlock block) {
   mAllocations.erase(block.id);
 }
 
-// Caller memcpy's into the returned pointer directly - for RHI_MEMORY_CPU_TO_GPU this
-// already is the GPU-visible memory (host-coherent), no further copy step needed.
-// TODO: for data that should live in RHI_MEMORY_GPU_ONLY, add a staging-buffer path
-// (CPU_TO_GPU staging buffer -> vkCmdCopyBuffer -> GPU_ONLY destination) as an
-// optimization; not needed for the current CPU_TO_GPU-only upload path.
+// TODO: staging buffer + vkCmdCopyBuffer path for RHI_MEMORY_GPU_ONLY data.
 void* VkRHIAllocator::map(RHIMemoryBlock block) {
   auto allocation = reinterpret_cast<VmaAllocation>(block.handle);
   void* data = nullptr;

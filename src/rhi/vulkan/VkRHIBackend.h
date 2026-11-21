@@ -14,6 +14,13 @@ struct VkRHINativeHandles {
   VkFormat         swapchainColorFormat;
 };
 
+// imageView is VK_NULL_HANDLE until bindMemory() creates it (needs bound memory first).
+struct VkRHIImage {
+  VkImage          image     = VK_NULL_HANDLE;
+  VkImageView      imageView = VK_NULL_HANDLE;
+  RHITextureFormat format    = RHI_FORMAT_UNDEFINED;
+};
+
 class VkRHIBackend final : public IRHIBackend {
 public:
   VkRHIBackend();
@@ -33,7 +40,7 @@ public:
 
   void bindMemory(void* gpuHandle, RHIResourceKind kind, RHIMemoryBlock block, u64 offset) override;
   void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) override;
-  void beginPass(void* cmdBuf, RHIPassType type) override;
+  void beginPass(void* cmdBuf, RHIPassType type, void* colorAttachment) override;
   void endPass(void* cmdBuf) override;
 
   void* createPipeline(const RHIPipelineDesc& desc) override;
@@ -51,6 +58,7 @@ public:
 
   void* getCurrentCommandBuffer()    const override { return m_CommandBuffer; }
   void* getCurrentSwapchainTarget()  const override;
+  void* getCurrentSwapchainImage() const override;
   void  getSwapchainExtent(u32& width, u32& height) const override {
     width = m_SwapchainExtent.width;
     height = m_SwapchainExtent.height;
@@ -66,7 +74,6 @@ private:
   bool checkValidationLayerSupport();
 
   VkSurfaceKHR m_Surface          = VK_NULL_HANDLE;
-  VkSwapchainKHR m__Swapchain     = VK_NULL_HANDLE;
   VkCommandPool m_CommandPool     = VK_NULL_HANDLE;
   VkCommandBuffer m_CommandBuffer = VK_NULL_HANDLE;
   VkInstance               mInstance       = VK_NULL_HANDLE;
@@ -78,6 +85,7 @@ private:
   VkSwapchainKHR           m_Swapchain = VK_NULL_HANDLE;
   std::vector<VkImage>     m_SwapchainImages;
   std::vector<VkImageView> m_SwapchainImageViews;
+  std::vector<VkRHIImage>  m_SwapchainRHIImages; // built once, no per-frame allocation
   uint32_t m_CurrentImageIndex = 0;
   VkFormat m_SwapchainImageFormat = VK_FORMAT_UNDEFINED;
   VkExtent2D m_SwapchainExtent = {0, 0};

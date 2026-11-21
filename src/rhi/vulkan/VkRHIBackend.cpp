@@ -46,6 +46,7 @@ VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code
   createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
 
   VkShaderModule module = VK_NULL_HANDLE;
+  
   if (vkCreateShaderModule(device, &createInfo, nullptr, &module) != VK_SUCCESS) {
     throw std::runtime_error("Failed to create shader module.");
   }
@@ -493,6 +494,14 @@ void VkRHIBackend::createSwapChain(void* nativeSurface, u32 framebufferWidth, u3
     }
   }
 
+  // TODO: map surfaceFormat.format back to RHITextureFormat instead of assuming it
+  m_SwapchainRHIImages.resize(imageCount);
+  for (size_t i = 0; i < imageCount; i++) {
+    m_SwapchainRHIImages[i] = VkRHIImage{
+      m_SwapchainImages[i], m_SwapchainImageViews[i], RHI_FORMAT_BGRA8_SRGB
+    };
+  }
+
   m_SwapchainImageFormat = surfaceFormat.format;
   m_SwapchainExtent = extent;
   mNativeHandles.swapchainColorFormat = surfaceFormat.format;
@@ -639,6 +648,11 @@ void* VkRHIBackend::getCurrentSwapchainTarget() const {
   return m_SwapchainImageViews[m_CurrentImageIndex];
 }
 
+void* VkRHIBackend::getCurrentSwapchainImage() const {
+  if (m_SwapchainRHIImages.empty()) return nullptr;
+  return const_cast<VkRHIImage*>(&m_SwapchainRHIImages[m_CurrentImageIndex]); // void* handles aren't const
+}
+
 void* VkRHIBackend::createImage(const RHITextureDesc& desc) {
   VkImageCreateInfo imageInfo{};
   imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -674,7 +688,7 @@ void* VkRHIBackend::createImage(const RHITextureDesc& desc) {
     throw std::runtime_error("Failed to create Vulkan image.");
   }
 
-  return static_cast<void*>(image);
+  return new VkRHIImage{image, VK_NULL_HANDLE, desc.format}; // view made later by bindMemory()
 }
 
 void* VkRHIBackend::createBuffer(const RHIBufferDesc& desc) {
@@ -707,8 +721,12 @@ void* VkRHIBackend::createBuffer(const RHIBufferDesc& desc) {
 
 void  VkRHIBackend::destroyImage(void* handle) {
   if (handle != nullptr) {
-    VkImage image = static_cast<VkImage>(handle);
-    vkDestroyImage(mDevice, image, nullptr);
+    auto* img = static_cast<VkRHIImage*>(handle);
+    if (img->imageView != VK_NULL_HANDLE) {
+      vkDestroyImageView(mDevice, img->imageView, nullptr);
+    }
+    vkDestroyImage(mDevice, img->image, nullptr);
+    delete img;
   }
 }
 
@@ -726,8 +744,8 @@ RHIMemoryRequirements VkRHIBackend::getMemoryRequirements(void* gpuHandle, RHIRe
     VkBuffer buffer = static_cast<VkBuffer>(gpuHandle);
     vkGetBufferMemoryRequirements(mDevice, buffer, &memRequirements);
   } else if (kind == RHI_RESOURCE_TEXTURE) {
-    VkImage image = static_cast<VkImage>(gpuHandle);
-    vkGetImageMemoryRequirements(mDevice, image, &memRequirements);
+    auto* img = static_cast<VkRHIImage*>(gpuHandle);
+    vkGetImageMemoryRequirements(mDevice, img->image, &memRequirements);
   }
 
   return RHIMemoryRequirements{ memRequirements.size, memRequirements.alignment };
@@ -759,9 +777,29 @@ void VkRHIBackend::bindMemory(void* gpuHandle, RHIResourceKind kind, RHIMemoryBl
   const VkDeviceSize absoluteOffset = details->baseOffset + offset;
 
   if (kind == RHI_RESOURCE_TEXTURE) {
-    VkImage image = static_cast<VkImage>(gpuHandle);
-    if (vkBindImageMemory(mDevice, image, details->deviceMemory, absoluteOffset) != VK_SUCCESS) {
+    auto* img = static_cast<VkRHIImage*>(gpuHandle);
+    if (vkBindImageMemory(mDevice, img->image, details->deviceMemory, absoluteOffset) != VK_SUCCESS) {
       throw std::runtime_error("Failed to bind image memory.");
+    }
+
+    // Only now that memory is bound can a view be created on top of it.
+    if (img->imageView == VK_NULL_HANDLE) {
+      const bool isDepth = img->format == RHI_FORMAT_D32_FLOAT;
+
+      VkImageViewCreateInfo viewInfo{};
+      viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+      viewInfo.image = img->image;
+      viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      viewInfo.format = toVkFormat(img->format);
+      viewInfo.subresourceRange.aspectMask = isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+      viewInfo.subresourceRange.baseMipLevel = 0;
+      viewInfo.subresourceRange.levelCount = 1;
+      viewInfo.subresourceRange.baseArrayLayer = 0;
+      viewInfo.subresourceRange.layerCount = 1;
+
+      if (vkCreateImageView(mDevice, &viewInfo, nullptr, &img->imageView) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create image view.");
+      }
     }
   } else {
     VkBuffer buffer = static_cast<VkBuffer>(gpuHandle);
@@ -817,8 +855,8 @@ void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {
     imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
-    imageBarrier.image = static_cast<VkImage>(info.handle);
-    
+    imageBarrier.image = static_cast<VkRHIImage*>(info.handle)->image;
+
     imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     imageBarrier.subresourceRange.baseMipLevel = 0;
     imageBarrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
@@ -852,18 +890,19 @@ void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {
   }
 }
 
-void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type) {
+void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type, void* colorAttachmentHandle) {
   VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
   if (commandBuffer == VK_NULL_HANDLE) {
     commandBuffer = m_CommandBuffer;
   }
 
   if (type == RHI_PASS_RASTER) {
-    if (m_SwapchainImageViews.empty()) return;
+    auto* img = static_cast<VkRHIImage*>(colorAttachmentHandle);
+    if (img == nullptr) return;
 
     VkRenderingAttachmentInfo colorAttachment{};
     colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    colorAttachment.imageView = m_SwapchainImageViews[m_CurrentImageIndex];
+    colorAttachment.imageView = img->imageView;
     colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;

@@ -540,7 +540,18 @@ void RenderGraph::execute(void* cmdBuf) {
 
     const RHIPassType rhiType = (pass.flags & RG_PASS_RASTER)  ? RHI_PASS_RASTER  :
                                 (pass.flags & RG_PASS_COMPUTE) ? RHI_PASS_COMPUTE : RHI_PASS_COPY;
-    mBackend->beginPass(cmdBuf, rhiType);
+
+    // First resource this pass writes as a color attachment - single-attachment only for
+    // now, MRT (multiple color attachments) needs beginPass() to take an array later.
+    void* colorAttachment = nullptr;
+    for (u32 u = pass.first_usage; u < pass.first_usage + pass.usage_count; u++) {
+      if (mUsages[u].is_write && (mUsages[u].usage & RHI_USAGE_COLOR_ATTACHMENT) != 0) {
+        colorAttachment = mGPUHandles[mUsages[u].resource_id];
+        break;
+      }
+    }
+
+    mBackend->beginPass(cmdBuf, rhiType, colorAttachment);
     RGResources res(*this);
     mExecutors[passId]->execute(res, cmdBuf);
     mBackend->endPass(cmdBuf);
