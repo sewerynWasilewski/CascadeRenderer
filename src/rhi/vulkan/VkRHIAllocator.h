@@ -19,6 +19,9 @@ public:
   RHIMemoryBlock allocate(u64 size, RHIMemoryType memoryType) override;
   void           free(RHIMemoryBlock block) override;
 
+  void* map(RHIMemoryBlock block) override;
+  void  unmap(RHIMemoryBlock block) override;
+
   struct AllocationDetails {
     VmaAllocation  allocation   = nullptr;
     VkDeviceMemory deviceMemory = VK_NULL_HANDLE;

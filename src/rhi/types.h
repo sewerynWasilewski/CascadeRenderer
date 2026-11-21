@@ -125,3 +125,34 @@ static_assert(std::is_same_v<std::variant_alternative_t<RHI_RESOURCE_BUFFER, RHI
 inline RHIResourceKind rhi_kind_of(const RHIResourceDesc& desc) {
   return static_cast<RHIResourceKind>(desc.index());
 }
+
+enum RHIShaderStage : u32 {
+  RHI_SHADER_STAGE_VERTEX   = 1 << 0,
+  RHI_SHADER_STAGE_FRAGMENT = 1 << 1,
+};
+
+// Per-channel format of one vertex attribute. Distinct from RHITextureFormat: these are
+// raw shader-input channels (floats), not pixel formats.
+enum RHIVertexFormat : u32 {
+  RHI_VERTEX_FLOAT2,
+  RHI_VERTEX_FLOAT3,
+  RHI_VERTEX_FLOAT4,
+};
+
+struct RHIVertexAttribute {
+  u32            location; // matches `layout(location = N)` in the vertex shader
+  u32            offset;   // byte offset within one vertex
+  RHIVertexFormat format;
+};
+
+// Describes a single raster pipeline.
+struct RHIPipelineDesc {
+  const char*                vertexShaderPath;
+  const char*                fragmentShaderPath;
+  RHITextureFormat           colorFormat;
+  RHITextureFormat           depthFormat      = RHI_FORMAT_UNDEFINED; // UNDEFINED = no depth attachment
+  u32                        pushConstantSize = 0;                    // vertex-stage push constant range
+  const RHIVertexAttribute*  vertexAttributes = nullptr;
+  u32                        vertexAttributeCount = 0;
+  u32                        vertexStride         = 0;                // bytes per vertex
+};

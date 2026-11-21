@@ -109,6 +109,25 @@ void VkRHIAllocator::free(RHIMemoryBlock block) {
   mAllocations.erase(block.id);
 }
 
+// Caller memcpy's into the returned pointer directly - for RHI_MEMORY_CPU_TO_GPU this
+// already is the GPU-visible memory (host-coherent), no further copy step needed.
+// TODO: for data that should live in RHI_MEMORY_GPU_ONLY, add a staging-buffer path
+// (CPU_TO_GPU staging buffer -> vkCmdCopyBuffer -> GPU_ONLY destination) as an
+// optimization; not needed for the current CPU_TO_GPU-only upload path.
+void* VkRHIAllocator::map(RHIMemoryBlock block) {
+  auto allocation = reinterpret_cast<VmaAllocation>(block.handle);
+  void* data = nullptr;
+  if (vmaMapMemory(mAllocator, allocation, &data) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to map GPU memory block via VMA");
+  }
+  return data;
+}
+
+void VkRHIAllocator::unmap(RHIMemoryBlock block) {
+  auto allocation = reinterpret_cast<VmaAllocation>(block.handle);
+  vmaUnmapMemory(mAllocator, allocation);
+}
+
 const VkRHIAllocator::AllocationDetails* VkRHIAllocator::getAllocationDetails(u32 blockId) const {
   auto it = mAllocations.find(blockId);
   return (it != mAllocations.end()) ? &it->second : nullptr;

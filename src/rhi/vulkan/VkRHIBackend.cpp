@@ -1,9 +1,65 @@
 #include "VkRHIBackend.h"
 #include <cstdint>
 #include <iostream>
+#include <fstream>
 #include <stdexcept>
 #include <vector>
 #include <cstring>
+
+namespace {
+
+VkFormat toVkFormat(RHITextureFormat format) {
+  switch (format) {
+    case RHI_FORMAT_RGBA8_UNORM:   return VK_FORMAT_R8G8B8A8_UNORM;
+    case RHI_FORMAT_BGRA8_SRGB:    return VK_FORMAT_B8G8R8A8_SRGB;
+    case RHI_FORMAT_RGBA16_FLOAT:  return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case RHI_FORMAT_D32_FLOAT:     return VK_FORMAT_D32_SFLOAT;
+    default:                       return VK_FORMAT_UNDEFINED;
+  }
+}
+
+VkFormat toVkFormat(RHIVertexFormat format) {
+  switch (format) {
+    case RHI_VERTEX_FLOAT2: return VK_FORMAT_R32G32_SFLOAT;
+    case RHI_VERTEX_FLOAT3: return VK_FORMAT_R32G32B32_SFLOAT;
+    case RHI_VERTEX_FLOAT4: return VK_FORMAT_R32G32B32A32_SFLOAT;
+    default:                return VK_FORMAT_UNDEFINED;
+  }
+}
+
+std::vector<char> readSpirvFile(const char* path) {
+  std::ifstream file(path, std::ios::ate | std::ios::binary);
+  if (!file.is_open()) {
+    throw std::runtime_error(std::string("Failed to open SPIR-V file: ") + path);
+  }
+  const size_t size = static_cast<size_t>(file.tellg());
+  std::vector<char> buffer(size);
+  file.seekg(0);
+  file.read(buffer.data(), static_cast<std::streamsize>(size));
+  return buffer;
+}
+
+VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code) {
+  VkShaderModuleCreateInfo createInfo{};
+  createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  createInfo.codeSize = code.size();
+  createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+  VkShaderModule module = VK_NULL_HANDLE;
+  if (vkCreateShaderModule(device, &createInfo, nullptr, &module) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create shader module.");
+  }
+  return module;
+}
+
+// Owns a VkPipeline + its VkPipelineLayout as one opaque handle, so callers never need
+// to track the layout separately just to call pushConstants().
+struct VkRHIPipeline {
+  VkPipeline       pipeline = VK_NULL_HANDLE;
+  VkPipelineLayout layout   = VK_NULL_HANDLE;
+};
+
+} // namespace
 
 const std::vector<const char*> validationLayers = {
   "VK_LAYER_KHRONOS_validation"
@@ -593,13 +649,7 @@ void* VkRHIBackend::createImage(const RHITextureDesc& desc) {
   imageInfo.mipLevels = desc.mipLevels > 0 ? desc.mipLevels : 1;
   imageInfo.arrayLayers = desc.arrayLayers > 0 ? desc.arrayLayers : 1;
   
-  VkFormat vkFormat = VK_FORMAT_R8G8B8A8_UNORM;
-  if (desc.format == RHI_FORMAT_RGBA8_UNORM)      vkFormat = VK_FORMAT_R8G8B8A8_UNORM;
-  else if (desc.format == RHI_FORMAT_BGRA8_SRGB)   vkFormat = VK_FORMAT_B8G8R8A8_SRGB;
-  else if (desc.format == RHI_FORMAT_RGBA16_FLOAT) vkFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-  else if (desc.format == RHI_FORMAT_D32_FLOAT)    vkFormat = VK_FORMAT_D32_SFLOAT;
-
-  imageInfo.format = vkFormat;
+  imageInfo.format = toVkFormat(desc.format);
   imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
   imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   
@@ -689,6 +739,14 @@ RHIMemoryBlock VkRHIBackend::allocatePool(u64 size, RHIMemoryType memoryType) {
 
 void VkRHIBackend::freePool(RHIMemoryBlock block) {
   mAllocator.free(block);
+}
+
+void* VkRHIBackend::map(RHIMemoryBlock block) {
+  return mAllocator.map(block);
+}
+
+void VkRHIBackend::unmap(RHIMemoryBlock block) {
+  mAllocator.unmap(block);
 }
 
 void VkRHIBackend::bindMemory(void* gpuHandle, RHIResourceKind kind, RHIMemoryBlock block, u64 offset) {
@@ -820,6 +878,20 @@ void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type) {
     renderingInfo.pColorAttachments = &colorAttachment;
 
     vkCmdBeginRendering(commandBuffer, &renderingInfo);
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(m_SwapchainExtent.width);
+    viewport.height = static_cast<float>(m_SwapchainExtent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = m_SwapchainExtent;
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
   }
 }
 void VkRHIBackend::endPass(void* cmdBuf) {
@@ -829,4 +901,180 @@ void VkRHIBackend::endPass(void* cmdBuf) {
   }
 
   vkCmdEndRendering(commandBuffer);
+}
+
+void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {
+  const std::vector<char> vertCode = readSpirvFile(desc.vertexShaderPath);
+  const std::vector<char> fragCode = readSpirvFile(desc.fragmentShaderPath);
+  VkShaderModule vertModule = createShaderModule(mDevice, vertCode);
+  VkShaderModule fragModule = createShaderModule(mDevice, fragCode);
+
+  VkPipelineShaderStageCreateInfo stages[2]{};
+  stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  stages[0].module = vertModule;
+  stages[0].pName = "main";
+  stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  stages[1].module = fragModule;
+  stages[1].pName = "main";
+
+  VkVertexInputBindingDescription binding{};
+  binding.binding = 0;
+  binding.stride = desc.vertexStride;
+  binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+  std::vector<VkVertexInputAttributeDescription> attributes(desc.vertexAttributeCount);
+  for (u32 i = 0; i < desc.vertexAttributeCount; i++) {
+    const RHIVertexAttribute& a = desc.vertexAttributes[i];
+    attributes[i] = { a.location, 0, toVkFormat(a.format), a.offset };
+  }
+
+  VkPipelineVertexInputStateCreateInfo vertexInput{};
+  vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vertexInput.vertexBindingDescriptionCount = desc.vertexAttributeCount > 0 ? 1 : 0;
+  vertexInput.pVertexBindingDescriptions = &binding;
+  vertexInput.vertexAttributeDescriptionCount = desc.vertexAttributeCount;
+  vertexInput.pVertexAttributeDescriptions = attributes.data();
+
+  VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+  inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewportState{};
+  viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  viewportState.viewportCount = 1;
+  viewportState.scissorCount = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{};
+  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+  rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rasterizer.lineWidth = 1.0f;
+
+  VkPipelineMultisampleStateCreateInfo multisample{};
+  multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo depthStencil{};
+  depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  const bool hasDepth = desc.depthFormat != RHI_FORMAT_UNDEFINED;
+  depthStencil.depthTestEnable = hasDepth ? VK_TRUE : VK_FALSE;
+  depthStencil.depthWriteEnable = hasDepth ? VK_TRUE : VK_FALSE;
+  depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+
+  VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+  colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  colorBlendAttachment.blendEnable = VK_FALSE;
+
+  VkPipelineColorBlendStateCreateInfo colorBlend{};
+  colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  colorBlend.attachmentCount = 1;
+  colorBlend.pAttachments = &colorBlendAttachment;
+
+  VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+  VkPipelineDynamicStateCreateInfo dynamicState{};
+  dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynamicState.dynamicStateCount = 2;
+  dynamicState.pDynamicStates = dynamicStates;
+
+  VkPushConstantRange pushConstantRange{};
+  pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  pushConstantRange.offset = 0;
+  pushConstantRange.size = desc.pushConstantSize;
+
+  VkPipelineLayoutCreateInfo layoutInfo{};
+  layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  if (desc.pushConstantSize > 0) {
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushConstantRange;
+  }
+
+  VkPipelineLayout layout = VK_NULL_HANDLE;
+  if (vkCreatePipelineLayout(mDevice, &layoutInfo, nullptr, &layout) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create pipeline layout.");
+  }
+
+  const VkFormat colorFormat = toVkFormat(desc.colorFormat);
+  const VkFormat depthFormatVk = hasDepth ? toVkFormat(desc.depthFormat) : VK_FORMAT_UNDEFINED;
+
+  VkPipelineRenderingCreateInfo renderingInfo{};
+  renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+  renderingInfo.colorAttachmentCount = 1;
+  renderingInfo.pColorAttachmentFormats = &colorFormat;
+  renderingInfo.depthAttachmentFormat = depthFormatVk;
+
+  VkGraphicsPipelineCreateInfo pipelineInfo{};
+  pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  pipelineInfo.pNext = &renderingInfo;
+  pipelineInfo.stageCount = 2;
+  pipelineInfo.pStages = stages;
+  pipelineInfo.pVertexInputState = &vertexInput;
+  pipelineInfo.pInputAssemblyState = &inputAssembly;
+  pipelineInfo.pViewportState = &viewportState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState = &multisample;
+  pipelineInfo.pDepthStencilState = &depthStencil;
+  pipelineInfo.pColorBlendState = &colorBlend;
+  pipelineInfo.pDynamicState = &dynamicState;
+  pipelineInfo.layout = layout;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  const VkResult result = vkCreateGraphicsPipelines(mDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
+
+  vkDestroyShaderModule(mDevice, vertModule, nullptr);
+  vkDestroyShaderModule(mDevice, fragModule, nullptr);
+
+  if (result != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create graphics pipeline.");
+  }
+
+  return new VkRHIPipeline{ pipeline, layout };
+}
+
+void VkRHIBackend::destroyPipeline(void* handle) {
+  if (handle == nullptr) return;
+  auto* p = static_cast<VkRHIPipeline*>(handle);
+  vkDestroyPipeline(mDevice, p->pipeline, nullptr);
+  vkDestroyPipelineLayout(mDevice, p->layout, nullptr);
+  delete p;
+}
+
+void VkRHIBackend::bindPipeline(void* cmdBuf, void* pipelineHandle) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  auto* p = static_cast<VkRHIPipeline*>(pipelineHandle);
+  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
+}
+
+void VkRHIBackend::bindVertexBuffer(void* cmdBuf, void* bufferHandle, u64 offset) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  VkBuffer buffer = static_cast<VkBuffer>(bufferHandle);
+  VkDeviceSize vkOffset = offset;
+  vkCmdBindVertexBuffers(commandBuffer, 0, 1, &buffer, &vkOffset);
+}
+
+void VkRHIBackend::bindIndexBuffer(void* cmdBuf, void* bufferHandle, u64 offset) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  VkBuffer buffer = static_cast<VkBuffer>(bufferHandle);
+  vkCmdBindIndexBuffer(commandBuffer, buffer, offset, VK_INDEX_TYPE_UINT32);
+}
+
+void VkRHIBackend::pushConstants(void* cmdBuf, void* pipelineHandle, u32 stageFlags,
+                                  u32 offset, u32 size, const void* data) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  auto* p = static_cast<VkRHIPipeline*>(pipelineHandle);
+
+  VkShaderStageFlags vkStages = 0;
+  if ((stageFlags & RHI_SHADER_STAGE_VERTEX) != 0)   vkStages |= VK_SHADER_STAGE_VERTEX_BIT;
+  if ((stageFlags & RHI_SHADER_STAGE_FRAGMENT) != 0) vkStages |= VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  vkCmdPushConstants(commandBuffer, p->layout, vkStages, offset, size, data);
+}
+
+void VkRHIBackend::drawIndexed(void* cmdBuf, u32 indexCount, u32 instanceCount,
+                                u32 firstIndex, i32 vertexOffset, u32 firstInstance) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  vkCmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }

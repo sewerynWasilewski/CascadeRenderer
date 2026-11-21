@@ -12,4 +12,8 @@ struct IRHIAllocator {
 
   virtual RHIMemoryBlock allocate(u64 size, RHIMemoryType memoryType) = 0;
   virtual void           free(RHIMemoryBlock block) = 0;
+
+  // Host-visible memory only (RHI_MEMORY_CPU_TO_GPU / RHI_MEMORY_GPU_TO_CPU).
+  virtual void* map(RHIMemoryBlock block) = 0;
+  virtual void  unmap(RHIMemoryBlock block) = 0;
 };

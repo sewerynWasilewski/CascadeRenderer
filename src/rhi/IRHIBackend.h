@@ -23,6 +23,8 @@ struct IRHIBackend {
 
   virtual RHIMemoryBlock allocatePool(u64 size, RHIMemoryType memoryType) = 0;
   virtual void           freePool(RHIMemoryBlock block) = 0;
+  virtual void*          map(RHIMemoryBlock block) = 0;
+  virtual void           unmap(RHIMemoryBlock block) = 0;
 
   // Bind a GPU resource handle to a memory block at a given offset - called by allocate().
   // gpuHandle is VkImage/VkBuffer (or equivalent) cast to void*.
@@ -34,6 +36,18 @@ struct IRHIBackend {
   // Pass framing - called by execute() around each pass executor. See issue #12.
   virtual void beginPass(void* cmdBuf, RHIPassType type) = 0;
   virtual void endPass(void* cmdBuf) = 0;
+
+  // Pipeline and draw-call recording. All void*/enum based so pass executors (which live
+  // in backend-agnostic Renderer/RenderGraph code) never touch a concrete graphics API.
+  virtual void* createPipeline(const RHIPipelineDesc& desc) = 0;
+  virtual void  destroyPipeline(void* handle) = 0;
+  virtual void  bindPipeline(void* cmdBuf, void* pipelineHandle) = 0;
+  virtual void  bindVertexBuffer(void* cmdBuf, void* bufferHandle, u64 offset) = 0;
+  virtual void  bindIndexBuffer(void* cmdBuf, void* bufferHandle, u64 offset) = 0;
+  virtual void  pushConstants(void* cmdBuf, void* pipelineHandle, u32 stageFlags,
+                               u32 offset, u32 size, const void* data) = 0;
+  virtual void  drawIndexed(void* cmdBuf, u32 indexCount, u32 instanceCount,
+                             u32 firstIndex, i32 vertexOffset, u32 firstInstance) = 0;
 
   virtual void  createSwapChain(void* nativeSurface, u32 framebufferWidth, u32 framebufferHeight) = 0;
   virtual void  beginFrame() = 0;
