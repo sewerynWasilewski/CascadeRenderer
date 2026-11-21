@@ -30,6 +30,8 @@ public:
   u32 width() const { return mWidth; }
   u32 height() const { return mHeight; }
 
+  IRHIBackend* backend() const { return mBackend.get(); }
+
   const void* getNativeHandles()          const { return mBackend->getNativeHandles(); }
   void*       getCurrentCommandBuffer()   const { return mBackend->getCurrentCommandBuffer(); }
   void*       getCurrentSwapchainTarget() const { return mBackend->getCurrentSwapchainTarget(); }

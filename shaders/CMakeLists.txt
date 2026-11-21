@@ -9,6 +9,8 @@ set(SHADER_SOURCES
     fullscreen.vert
     lighting.frag
     present.frag
+    basic.vert
+    basic.frag
 )
 
 set(SHADER_COMPILE_OPTIONS --target-env=vulkan1.1 -O)
