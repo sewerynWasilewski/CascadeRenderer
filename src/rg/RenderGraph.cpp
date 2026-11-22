@@ -310,6 +310,7 @@ void RenderGraph::compile() {
       const RGResourceUsage& next = mUsages[order[i + 1]];
 
       if (curr.resource_id != next.resource_id) continue;
+      assert((curr.usage & RHI_USAGE_PRESENT_SRC) == 0 && "RHI_USAGE_PRESENT_SRC must be the last usage of a resource");
       if (!curr.is_write && !next.is_write && curr.usage == next.usage) continue;
 
       mBarriers.push_back({

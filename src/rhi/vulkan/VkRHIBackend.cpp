@@ -53,6 +53,19 @@ VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code
   return module;
 }
 
+// UNDEFINED discards prior contents - correct for the first transition of a resource, and for
+// any usage whose exact prior layout we don't model (prefer a fresh transition over guessing wrong).
+VkImageLayout toVkImageLayout(RHIUsage usage) {
+  if (usage == RHI_USAGE_NONE) return VK_IMAGE_LAYOUT_UNDEFINED;
+  if ((usage & RHI_USAGE_COLOR_ATTACHMENT) != 0) return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  if ((usage & RHI_USAGE_DEPTH_ATTACHMENT) != 0) return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+  if ((usage & (RHI_USAGE_SAMPLED_TEXTURE | RHI_USAGE_STORAGE_TEXTURE)) != 0) return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  if ((usage & RHI_USAGE_TRANSFER_SRC) != 0) return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  if ((usage & RHI_USAGE_TRANSFER_DST) != 0) return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  if ((usage & RHI_USAGE_PRESENT_SRC) != 0) return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+  return VK_IMAGE_LAYOUT_GENERAL;
+}
+
 // Owns a VkPipeline + its VkPipelineLayout as one opaque handle, so callers never need
 // to track the layout separately just to call pushConstants().
 struct VkRHIPipeline {
@@ -823,6 +836,7 @@ void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {
     if ((usage & RHI_USAGE_DEPTH_ATTACHMENT) != 0) flags |= VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
     if ((usage & (RHI_USAGE_SAMPLED_TEXTURE | RHI_USAGE_STORAGE_TEXTURE)) != 0) flags |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
     if ((usage & (RHI_USAGE_TRANSFER_SRC | RHI_USAGE_TRANSFER_DST)) != 0) flags |= VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    if ((usage & RHI_USAGE_PRESENT_SRC) != 0) flags |= VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
     return flags != 0 ? flags : VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
   };
 
@@ -841,23 +855,26 @@ void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {
   };
 
   if (info.resource_kind == RHI_RESOURCE_TEXTURE && info.handle != nullptr) {
+    auto* img = static_cast<VkRHIImage*>(info.handle);
+
     VkImageMemoryBarrier2 imageBarrier{};
     imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-    
+
     imageBarrier.srcStageMask = getStageFlags(info.before_usage);
     imageBarrier.srcAccessMask = getAccessFlags(info.before_usage);
     imageBarrier.dstStageMask = getStageFlags(info.after_usage);
     imageBarrier.dstAccessMask = getAccessFlags(info.after_usage);
 
-    imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    imageBarrier.oldLayout = toVkImageLayout(info.before_usage);
+    imageBarrier.newLayout = toVkImageLayout(info.after_usage);
 
     imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
-    imageBarrier.image = static_cast<VkRHIImage*>(info.handle)->image;
+    imageBarrier.image = img->image;
 
-    imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    imageBarrier.subresourceRange.aspectMask =
+      img->format == RHI_FORMAT_D32_FLOAT ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
     imageBarrier.subresourceRange.baseMipLevel = 0;
     imageBarrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
     imageBarrier.subresourceRange.baseArrayLayer = 0;

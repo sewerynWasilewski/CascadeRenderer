@@ -55,6 +55,7 @@ enum RHIUsage : u32 {
   RHI_USAGE_VERTEX_BUFFER      = 1 << 6,
   RHI_USAGE_INDEX_BUFFER       = 1 << 7,
   RHI_USAGE_UNIFORM_BUFFER     = 1 << 8,
+  RHI_USAGE_PRESENT_SRC        = 1 << 9,  // handed off to the presentation engine; terminal usage, nothing may follow it this frame
 };
 
 // Transition: normal usage change. Aliasing: memory reuse — receiver starts from UNDEFINED layout.
