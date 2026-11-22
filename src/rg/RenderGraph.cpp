@@ -57,10 +57,11 @@ RGResourceHandle RenderGraph::createPersistentImpl(const char* name, RHIMemoryTy
   return RGResourceHandle{ id, 0, mEpoch };
 }
 
-RGResourceHandle RenderGraph::importImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle) {
+RGResourceHandle RenderGraph::importImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle, RHIUsage initialUsage) {
   assert(gpuHandle != nullptr && "import: gpuHandle must not be null");
   const u32 id = registerResource(name, memoryType, RG_RESOURCE_EXTERNAL, desc);
-  mGPUHandles[id] = gpuHandle;  // caller is responsible for the real initial usage state
+  mGPUHandles[id] = gpuHandle;
+  mLastUsages[id] = initialUsage; // trust the caller - no entry barrier if the first pass declares this same usage
   return RGResourceHandle{ id, 0, mEpoch };
 }
 

@@ -55,8 +55,8 @@ public:
   RGResourceHandle createPersistentImage(const char* name, RHIMemoryType memoryType, RHITextureDesc desc) { return createPersistentImpl(name, memoryType, desc); }
   RGResourceHandle createPersistentBuffer(const char* name, RHIMemoryType memoryType, RHIBufferDesc desc) { return createPersistentImpl(name, memoryType, desc); }
 
-  RGResourceHandle importImage(const char* name, RHIMemoryType memoryType, RHITextureDesc desc, void* gpuHandle) { return importImpl(name, memoryType, desc, gpuHandle); }
-  RGResourceHandle importBuffer(const char* name, RHIMemoryType memoryType, RHIBufferDesc desc, void* gpuHandle) { return importImpl(name, memoryType, desc, gpuHandle); }
+  RGResourceHandle importImage(const char* name, RHIMemoryType memoryType, RHITextureDesc desc, void* gpuHandle, RHIUsage initialUsage = RHI_USAGE_NONE) { return importImpl(name, memoryType, desc, gpuHandle, initialUsage); }
+  RGResourceHandle importBuffer(const char* name, RHIMemoryType memoryType, RHIBufferDesc desc, void* gpuHandle, RHIUsage initialUsage = RHI_USAGE_NONE) { return importImpl(name, memoryType, desc, gpuHandle, initialUsage); }
 
   template<typename Setup, typename Execute>
   RGPassHandle addPass(const char* name, RGPassFlags flags, Setup&& setup, Execute&& exec); 
@@ -118,7 +118,7 @@ private:
 
   RGResourceHandle createImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc);
   RGResourceHandle createPersistentImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc);
-  RGResourceHandle importImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle);
+  RGResourceHandle importImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle, RHIUsage initialUsage);
 
   inline u32 registerResource(const char* name, RHIMemoryType memoryType, RGResourceType resType, RHIResourceDesc desc);
 

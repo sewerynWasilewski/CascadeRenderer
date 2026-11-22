@@ -152,13 +152,28 @@ int main(int argc, char** argv) {
                                        glm::vec3(0.3f, 1.0f, 0.0f));
         glm::mat4 mvp = camera.viewProjection() * model;
 
-        backend->beginPass(cmdBuf, RHI_PASS_RASTER, backend->getCurrentSwapchainImage());
-        backend->bindPipeline(cmdBuf, cubePipeline);
-        backend->bindVertexBuffer(cmdBuf, vertexBuffer, 0);
-        backend->bindIndexBuffer(cmdBuf, indexBuffer, 0);
-        backend->pushConstants(cmdBuf, cubePipeline, RHI_SHADER_STAGE_VERTEX, 0, sizeof(mvp), &mvp);
-        backend->drawIndexed(cmdBuf, static_cast<u32>(indices.size()), 1, 0, 0, 0);
-        backend->endPass(cmdBuf);
+        // initialUsage=COLOR_ATTACHMENT: beginFrame() already transitioned this image there,
+        // so RenderGraph's own entry barrier for "Draw"'s write below becomes a no-op.
+        RGResourceHandle backbuffer = rg.importImage("backbuffer", RHI_MEMORY_GPU_ONLY,
+          RHITextureDesc{static_cast<u32>(fbWidth), static_cast<u32>(fbHeight), 1, 1, 1, RHI_FORMAT_BGRA8_SRGB},
+          backend->getCurrentSwapchainImage(), RHI_USAGE_COLOR_ATTACHMENT);
+
+        rg.addPass("Draw", RG_PASS_RASTER,
+          [&](RenderGraph::PassBuilder& b) { backbuffer = b.write(backbuffer, RHI_USAGE_COLOR_ATTACHMENT); },
+          [&](RGResources&, void* cmd) {
+            backend->bindPipeline(cmd, cubePipeline);
+            backend->bindVertexBuffer(cmd, vertexBuffer, 0);
+            backend->bindIndexBuffer(cmd, indexBuffer, 0);
+            backend->pushConstants(cmd, cubePipeline, RHI_SHADER_STAGE_VERTEX, 0, sizeof(mvp), &mvp);
+            backend->drawIndexed(cmd, static_cast<u32>(indices.size()), 1, 0, 0, 0);
+          }
+        );
+
+        rg.compile();
+        rg.plan();
+        rg.allocate();
+        rg.execute(cmdBuf);
+        rg.reset();
       }
 
       beginDebugUIFrame();
@@ -169,35 +184,6 @@ int main(int argc, char** argv) {
       renderDebugUI(renderer);
 
       renderer.endFrame();
-
-      RGResourceHandle color = rg.createImage("color", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
-      RGResourceHandle depth = rg.createImage("depth", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
-      RGResourceHandle light = rg.createImage("light", RHI_MEMORY_GPU_ONLY, RHITextureDesc{1280, 720, 1, 1, 1});
-
-      rg.addPass("GBuffer", RG_PASS_RASTER,
-        [&](RenderGraph::PassBuilder& b) {
-      color = b.write(color, RHI_USAGE_COLOR_ATTACHMENT);
-      depth = b.write(depth, RHI_USAGE_DEPTH_ATTACHMENT);
-        },
-        [](RGResources&, void*) {}
-      );
-
-      rg.addPass("Lighting", RG_PASS_RASTER,
-        [&](RenderGraph::PassBuilder& b) {
-      b.read(color, RHI_USAGE_SAMPLED_TEXTURE);
-      b.read(depth, RHI_USAGE_SAMPLED_TEXTURE);
-      light = b.write(light, RHI_USAGE_COLOR_ATTACHMENT);
-        },
-        [](RGResources&, void*) {}
-      );
-
-      rg.addPass("Present", static_cast<RGPassFlags>(RG_PASS_RASTER | RG_PASS_NEVER_CULL),
-        [&](RenderGraph::PassBuilder& b) { b.read(light, RHI_USAGE_SAMPLED_TEXTURE); },
-        [](RGResources&, void*) {}
-      );
-
-      rg.compile();
-      rg.reset();
     }
 
     rg.dumpJSON("graph.json");

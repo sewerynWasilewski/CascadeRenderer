@@ -553,57 +553,35 @@ void VkRHIBackend::beginFrame() {
     throw std::runtime_error("Failed to begin recording command buffer.");
   }
 
-  VkImageMemoryBarrier barrier{};
-  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image = m_SwapchainImages[m_CurrentImageIndex];
-  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = 1;
-  barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
-  barrier.srcAccessMask = 0;
-  barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-  vkCmdPipelineBarrier(
-    m_CommandBuffer,
-    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+  // Entry transition for this frame's swapchain image - import it with initialUsage matching
+  // RHI_USAGE_COLOR_ATTACHMENT so RenderGraph's own compile()-time barrier doesn't duplicate this.
+  RHIBarrierInfo info{
+    &m_SwapchainRHIImages[m_CurrentImageIndex],
     0,
-    0, nullptr,
-    0, nullptr,
-    1, &barrier
-  );
+    RHI_RESOURCE_TEXTURE,
+    RHI_USAGE_NONE,
+    RHI_USAGE_COLOR_ATTACHMENT,
+    RHI_BARRIER_TRANSITION,
+    RHI_QUEUE_IGNORED,
+    RHI_QUEUE_IGNORED,
+  };
+  emitBarrier(info, m_CommandBuffer);
 }
 
 void VkRHIBackend::endFrame() {
-  VkImageMemoryBarrier barrier{};
-  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-  barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image = m_SwapchainImages[m_CurrentImageIndex];
-  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = 1;
-  barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
-  barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-  barrier.dstAccessMask = 0;
-
-  vkCmdPipelineBarrier(
-    m_CommandBuffer,
-    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+  // Overlay (ImGui) draws directly on the swapchain view after this point, outside RenderGraph -
+  // see ideas.md #11. This is the one present-layout transition RenderGraph can't own yet.
+  RHIBarrierInfo info{
+    &m_SwapchainRHIImages[m_CurrentImageIndex],
     0,
-    0, nullptr,
-    0, nullptr,
-    1, &barrier
-  );
+    RHI_RESOURCE_TEXTURE,
+    RHI_USAGE_COLOR_ATTACHMENT,
+    RHI_USAGE_PRESENT_SRC,
+    RHI_BARRIER_TRANSITION,
+    RHI_QUEUE_IGNORED,
+    RHI_QUEUE_IGNORED,
+  };
+  emitBarrier(info, m_CommandBuffer);
 
   if (vkEndCommandBuffer(m_CommandBuffer) != VK_SUCCESS) {
     throw std::runtime_error("Failed to record command buffer.");
@@ -934,6 +912,7 @@ void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type, void* colorAttachme
     renderingInfo.pColorAttachments = &colorAttachment;
 
     vkCmdBeginRendering(commandBuffer, &renderingInfo);
+    m_InRendering = true;
 
     VkViewport viewport{};
     viewport.x = 0.0f;
@@ -956,7 +935,10 @@ void VkRHIBackend::endPass(void* cmdBuf) {
     commandBuffer = m_CommandBuffer;
   }
 
-  vkCmdEndRendering(commandBuffer);
+  if (m_InRendering) {
+    vkCmdEndRendering(commandBuffer);
+    m_InRendering = false;
+  }
 }
 
 void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {

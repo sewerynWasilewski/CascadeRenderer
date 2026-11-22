@@ -91,6 +91,7 @@ private:
   VkExtent2D m_SwapchainExtent = {0, 0};
   VkSemaphore m_ImageAvailableSemaphore = VK_NULL_HANDLE;
   VkSemaphore m_RenderFinishedSemaphore = VK_NULL_HANDLE;
+  bool m_InRendering = false; // true between vkCmdBeginRendering and vkCmdEndRendering - passes with no color attachment skip both
 
   VkRHINativeHandles mNativeHandles{};
   VkRHIAllocator mAllocator;
