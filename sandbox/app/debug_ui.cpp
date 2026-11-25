@@ -51,9 +51,10 @@ void renderDebugUI(Renderer& renderer) {
   colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
   colorAttachment.imageView = currentSwapchainImageView;
   colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-  colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  // LOAD, not CLEAR: whatever the scene rendered earlier this frame (via
+  // IRHIBackend::beginPass) must stay on screen under the UI overlay.
+  colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
   colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-  colorAttachment.clearValue = { { 0.1f, 0.1f, 0.15f, 1.0f } };
 
   u32 width, height;
   renderer.getSwapchainExtent(width, height);

@@ -1,9 +1,79 @@
 #include "VkRHIBackend.h"
 #include <cstdint>
 #include <iostream>
+#include <fstream>
 #include <stdexcept>
 #include <vector>
 #include <cstring>
+
+namespace {
+
+VkFormat toVkFormat(RHITextureFormat format) {
+  switch (format) {
+    case RHI_FORMAT_RGBA8_UNORM:   return VK_FORMAT_R8G8B8A8_UNORM;
+    case RHI_FORMAT_BGRA8_SRGB:    return VK_FORMAT_B8G8R8A8_SRGB;
+    case RHI_FORMAT_RGBA16_FLOAT:  return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case RHI_FORMAT_D32_FLOAT:     return VK_FORMAT_D32_SFLOAT;
+    default:                       return VK_FORMAT_UNDEFINED;
+  }
+}
+
+VkFormat toVkFormat(RHIVertexFormat format) {
+  switch (format) {
+    case RHI_VERTEX_FLOAT2: return VK_FORMAT_R32G32_SFLOAT;
+    case RHI_VERTEX_FLOAT3: return VK_FORMAT_R32G32B32_SFLOAT;
+    case RHI_VERTEX_FLOAT4: return VK_FORMAT_R32G32B32A32_SFLOAT;
+    default:                return VK_FORMAT_UNDEFINED;
+  }
+}
+
+std::vector<char> readSpirvFile(const char* path) {
+  std::ifstream file(path, std::ios::ate | std::ios::binary);
+  if (!file.is_open()) {
+    throw std::runtime_error(std::string("Failed to open SPIR-V file: ") + path);
+  }
+  const size_t size = static_cast<size_t>(file.tellg());
+  std::vector<char> buffer(size);
+  file.seekg(0);
+  file.read(buffer.data(), static_cast<std::streamsize>(size));
+  return buffer;
+}
+
+VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code) {
+  VkShaderModuleCreateInfo createInfo{};
+  createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  createInfo.codeSize = code.size();
+  createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+  VkShaderModule module = VK_NULL_HANDLE;
+  
+  if (vkCreateShaderModule(device, &createInfo, nullptr, &module) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create shader module.");
+  }
+  return module;
+}
+
+// UNDEFINED discards prior contents - correct for the first transition of a resource, and for
+// any usage whose exact prior layout we don't model (prefer a fresh transition over guessing wrong).
+VkImageLayout toVkImageLayout(RHIUsage usage) {
+  if (usage == RHI_USAGE_NONE) return VK_IMAGE_LAYOUT_UNDEFINED;
+  if ((usage & RHI_USAGE_COLOR_ATTACHMENT) != 0) return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  if ((usage & RHI_USAGE_DEPTH_ATTACHMENT) != 0) return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+  if ((usage & (RHI_USAGE_SAMPLED_TEXTURE | RHI_USAGE_STORAGE_TEXTURE)) != 0) return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  if ((usage & RHI_USAGE_TRANSFER_SRC) != 0) return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  if ((usage & RHI_USAGE_TRANSFER_DST) != 0) return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  if ((usage & RHI_USAGE_PRESENT_SRC) != 0) return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+  return VK_IMAGE_LAYOUT_GENERAL;
+}
+
+// Owns a VkPipeline + its VkPipelineLayout as one opaque handle, so callers never need
+// to track the layout separately just to call pushConstants().
+struct VkRHIPipeline {
+  VkPipeline       pipeline = VK_NULL_HANDLE;
+  VkPipelineLayout layout   = VK_NULL_HANDLE;
+};
+
+} // namespace
 
 const std::vector<const char*> validationLayers = {
   "VK_LAYER_KHRONOS_validation"
@@ -437,6 +507,14 @@ void VkRHIBackend::createSwapChain(void* nativeSurface, u32 framebufferWidth, u3
     }
   }
 
+  // TODO: map surfaceFormat.format back to RHITextureFormat instead of assuming it
+  m_SwapchainRHIImages.resize(imageCount);
+  for (size_t i = 0; i < imageCount; i++) {
+    m_SwapchainRHIImages[i] = VkRHIImage{
+      m_SwapchainImages[i], m_SwapchainImageViews[i], RHI_FORMAT_BGRA8_SRGB
+    };
+  }
+
   m_SwapchainImageFormat = surfaceFormat.format;
   m_SwapchainExtent = extent;
   mNativeHandles.swapchainColorFormat = surfaceFormat.format;
@@ -475,57 +553,35 @@ void VkRHIBackend::beginFrame() {
     throw std::runtime_error("Failed to begin recording command buffer.");
   }
 
-  VkImageMemoryBarrier barrier{};
-  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image = m_SwapchainImages[m_CurrentImageIndex];
-  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = 1;
-  barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
-  barrier.srcAccessMask = 0;
-  barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-  vkCmdPipelineBarrier(
-    m_CommandBuffer,
-    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+  // Entry transition for this frame's swapchain image - import it with initialUsage matching
+  // RHI_USAGE_COLOR_ATTACHMENT so RenderGraph's own compile()-time barrier doesn't duplicate this.
+  RHIBarrierInfo info{
+    &m_SwapchainRHIImages[m_CurrentImageIndex],
     0,
-    0, nullptr,
-    0, nullptr,
-    1, &barrier
-  );
+    RHI_RESOURCE_TEXTURE,
+    RHI_USAGE_NONE,
+    RHI_USAGE_COLOR_ATTACHMENT,
+    RHI_BARRIER_TRANSITION,
+    RHI_QUEUE_IGNORED,
+    RHI_QUEUE_IGNORED,
+  };
+  emitBarrier(info, m_CommandBuffer);
 }
 
 void VkRHIBackend::endFrame() {
-  VkImageMemoryBarrier barrier{};
-  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-  barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image = m_SwapchainImages[m_CurrentImageIndex];
-  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = 1;
-  barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
-  barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-  barrier.dstAccessMask = 0;
-
-  vkCmdPipelineBarrier(
-    m_CommandBuffer,
-    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+  // Overlay (ImGui) draws directly on the swapchain view after this point, outside RenderGraph -
+  // see ideas.md #11. This is the one present-layout transition RenderGraph can't own yet.
+  RHIBarrierInfo info{
+    &m_SwapchainRHIImages[m_CurrentImageIndex],
     0,
-    0, nullptr,
-    0, nullptr,
-    1, &barrier
-  );
+    RHI_RESOURCE_TEXTURE,
+    RHI_USAGE_COLOR_ATTACHMENT,
+    RHI_USAGE_PRESENT_SRC,
+    RHI_BARRIER_TRANSITION,
+    RHI_QUEUE_IGNORED,
+    RHI_QUEUE_IGNORED,
+  };
+  emitBarrier(info, m_CommandBuffer);
 
   if (vkEndCommandBuffer(m_CommandBuffer) != VK_SUCCESS) {
     throw std::runtime_error("Failed to record command buffer.");
@@ -583,6 +639,11 @@ void* VkRHIBackend::getCurrentSwapchainTarget() const {
   return m_SwapchainImageViews[m_CurrentImageIndex];
 }
 
+void* VkRHIBackend::getCurrentSwapchainImage() const {
+  if (m_SwapchainRHIImages.empty()) return nullptr;
+  return const_cast<VkRHIImage*>(&m_SwapchainRHIImages[m_CurrentImageIndex]); // void* handles aren't const
+}
+
 void* VkRHIBackend::createImage(const RHITextureDesc& desc) {
   VkImageCreateInfo imageInfo{};
   imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -593,13 +654,7 @@ void* VkRHIBackend::createImage(const RHITextureDesc& desc) {
   imageInfo.mipLevels = desc.mipLevels > 0 ? desc.mipLevels : 1;
   imageInfo.arrayLayers = desc.arrayLayers > 0 ? desc.arrayLayers : 1;
   
-  VkFormat vkFormat = VK_FORMAT_R8G8B8A8_UNORM;
-  if (desc.format == RHI_FORMAT_RGBA8_UNORM)      vkFormat = VK_FORMAT_R8G8B8A8_UNORM;
-  else if (desc.format == RHI_FORMAT_BGRA8_SRGB)   vkFormat = VK_FORMAT_B8G8R8A8_SRGB;
-  else if (desc.format == RHI_FORMAT_RGBA16_FLOAT) vkFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-  else if (desc.format == RHI_FORMAT_D32_FLOAT)    vkFormat = VK_FORMAT_D32_SFLOAT;
-
-  imageInfo.format = vkFormat;
+  imageInfo.format = toVkFormat(desc.format);
   imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
   imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   
@@ -624,7 +679,7 @@ void* VkRHIBackend::createImage(const RHITextureDesc& desc) {
     throw std::runtime_error("Failed to create Vulkan image.");
   }
 
-  return static_cast<void*>(image);
+  return new VkRHIImage{image, VK_NULL_HANDLE, desc.format}; // view made later by bindMemory()
 }
 
 void* VkRHIBackend::createBuffer(const RHIBufferDesc& desc) {
@@ -657,8 +712,12 @@ void* VkRHIBackend::createBuffer(const RHIBufferDesc& desc) {
 
 void  VkRHIBackend::destroyImage(void* handle) {
   if (handle != nullptr) {
-    VkImage image = static_cast<VkImage>(handle);
-    vkDestroyImage(mDevice, image, nullptr);
+    auto* img = static_cast<VkRHIImage*>(handle);
+    if (img->imageView != VK_NULL_HANDLE) {
+      vkDestroyImageView(mDevice, img->imageView, nullptr);
+    }
+    vkDestroyImage(mDevice, img->image, nullptr);
+    delete img;
   }
 }
 
@@ -676,8 +735,8 @@ RHIMemoryRequirements VkRHIBackend::getMemoryRequirements(void* gpuHandle, RHIRe
     VkBuffer buffer = static_cast<VkBuffer>(gpuHandle);
     vkGetBufferMemoryRequirements(mDevice, buffer, &memRequirements);
   } else if (kind == RHI_RESOURCE_TEXTURE) {
-    VkImage image = static_cast<VkImage>(gpuHandle);
-    vkGetImageMemoryRequirements(mDevice, image, &memRequirements);
+    auto* img = static_cast<VkRHIImage*>(gpuHandle);
+    vkGetImageMemoryRequirements(mDevice, img->image, &memRequirements);
   }
 
   return RHIMemoryRequirements{ memRequirements.size, memRequirements.alignment };
@@ -691,17 +750,51 @@ void VkRHIBackend::freePool(RHIMemoryBlock block) {
   mAllocator.free(block);
 }
 
+void* VkRHIBackend::map(RHIMemoryBlock block) {
+  return mAllocator.map(block);
+}
+
+void VkRHIBackend::unmap(RHIMemoryBlock block) {
+  mAllocator.unmap(block);
+}
+
 void VkRHIBackend::bindMemory(void* gpuHandle, RHIResourceKind kind, RHIMemoryBlock block, u64 offset) {
-  VkDeviceMemory memory = static_cast<VkDeviceMemory>(block.handle);
+  // block.handle is a VmaAllocation*, not a VkDeviceMemory - look up the real backing
+  // memory (and VMA's own base offset into it) via the allocator.
+  const VkRHIAllocator::AllocationDetails* details = mAllocator.getAllocationDetails(block.id);
+  if (!details) {
+    throw std::runtime_error("bindMemory: unknown memory block id.");
+  }
+  const VkDeviceSize absoluteOffset = details->baseOffset + offset;
 
   if (kind == RHI_RESOURCE_TEXTURE) {
-    VkImage image = static_cast<VkImage>(gpuHandle);
-    if (vkBindImageMemory(mDevice, image, memory, offset) != VK_SUCCESS) {
+    auto* img = static_cast<VkRHIImage*>(gpuHandle);
+    if (vkBindImageMemory(mDevice, img->image, details->deviceMemory, absoluteOffset) != VK_SUCCESS) {
       throw std::runtime_error("Failed to bind image memory.");
+    }
+
+    // Only now that memory is bound can a view be created on top of it.
+    if (img->imageView == VK_NULL_HANDLE) {
+      const bool isDepth = img->format == RHI_FORMAT_D32_FLOAT;
+
+      VkImageViewCreateInfo viewInfo{};
+      viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+      viewInfo.image = img->image;
+      viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      viewInfo.format = toVkFormat(img->format);
+      viewInfo.subresourceRange.aspectMask = isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+      viewInfo.subresourceRange.baseMipLevel = 0;
+      viewInfo.subresourceRange.levelCount = 1;
+      viewInfo.subresourceRange.baseArrayLayer = 0;
+      viewInfo.subresourceRange.layerCount = 1;
+
+      if (vkCreateImageView(mDevice, &viewInfo, nullptr, &img->imageView) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create image view.");
+      }
     }
   } else {
     VkBuffer buffer = static_cast<VkBuffer>(gpuHandle);
-    if (vkBindBufferMemory(mDevice, buffer, memory, offset) != VK_SUCCESS) {
+    if (vkBindBufferMemory(mDevice, buffer, details->deviceMemory, absoluteOffset) != VK_SUCCESS) {
       throw std::runtime_error("Failed to bind buffer memory.");
     }
   }
@@ -721,6 +814,7 @@ void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {
     if ((usage & RHI_USAGE_DEPTH_ATTACHMENT) != 0) flags |= VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
     if ((usage & (RHI_USAGE_SAMPLED_TEXTURE | RHI_USAGE_STORAGE_TEXTURE)) != 0) flags |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
     if ((usage & (RHI_USAGE_TRANSFER_SRC | RHI_USAGE_TRANSFER_DST)) != 0) flags |= VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    if ((usage & RHI_USAGE_PRESENT_SRC) != 0) flags |= VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
     return flags != 0 ? flags : VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
   };
 
@@ -739,23 +833,26 @@ void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {
   };
 
   if (info.resource_kind == RHI_RESOURCE_TEXTURE && info.handle != nullptr) {
+    auto* img = static_cast<VkRHIImage*>(info.handle);
+
     VkImageMemoryBarrier2 imageBarrier{};
     imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-    
+
     imageBarrier.srcStageMask = getStageFlags(info.before_usage);
     imageBarrier.srcAccessMask = getAccessFlags(info.before_usage);
     imageBarrier.dstStageMask = getStageFlags(info.after_usage);
     imageBarrier.dstAccessMask = getAccessFlags(info.after_usage);
 
-    imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    imageBarrier.oldLayout = toVkImageLayout(info.before_usage);
+    imageBarrier.newLayout = toVkImageLayout(info.after_usage);
 
     imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
-    imageBarrier.image = static_cast<VkImage>(info.handle);
-    
-    imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    imageBarrier.image = img->image;
+
+    imageBarrier.subresourceRange.aspectMask =
+      img->format == RHI_FORMAT_D32_FLOAT ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
     imageBarrier.subresourceRange.baseMipLevel = 0;
     imageBarrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
     imageBarrier.subresourceRange.baseArrayLayer = 0;
@@ -788,18 +885,19 @@ void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {
   }
 }
 
-void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type) {
+void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type, void* colorAttachmentHandle) {
   VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
   if (commandBuffer == VK_NULL_HANDLE) {
     commandBuffer = m_CommandBuffer;
   }
 
   if (type == RHI_PASS_RASTER) {
-    if (m_SwapchainImageViews.empty()) return;
+    auto* img = static_cast<VkRHIImage*>(colorAttachmentHandle);
+    if (img == nullptr) return;
 
     VkRenderingAttachmentInfo colorAttachment{};
     colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    colorAttachment.imageView = m_SwapchainImageViews[m_CurrentImageIndex];
+    colorAttachment.imageView = img->imageView;
     colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -814,6 +912,21 @@ void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type) {
     renderingInfo.pColorAttachments = &colorAttachment;
 
     vkCmdBeginRendering(commandBuffer, &renderingInfo);
+    m_InRendering = true;
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(m_SwapchainExtent.width);
+    viewport.height = static_cast<float>(m_SwapchainExtent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = m_SwapchainExtent;
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
   }
 }
 void VkRHIBackend::endPass(void* cmdBuf) {
@@ -822,5 +935,184 @@ void VkRHIBackend::endPass(void* cmdBuf) {
     commandBuffer = m_CommandBuffer;
   }
 
-  vkCmdEndRendering(commandBuffer);
+  if (m_InRendering) {
+    vkCmdEndRendering(commandBuffer);
+    m_InRendering = false;
+  }
+}
+
+void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {
+  const std::vector<char> vertCode = readSpirvFile(desc.vertexShaderPath);
+  const std::vector<char> fragCode = readSpirvFile(desc.fragmentShaderPath);
+  VkShaderModule vertModule = createShaderModule(mDevice, vertCode);
+  VkShaderModule fragModule = createShaderModule(mDevice, fragCode);
+
+  VkPipelineShaderStageCreateInfo stages[2]{};
+  stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  stages[0].module = vertModule;
+  stages[0].pName = "main";
+  stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  stages[1].module = fragModule;
+  stages[1].pName = "main";
+
+  VkVertexInputBindingDescription binding{};
+  binding.binding = 0;
+  binding.stride = desc.vertexStride;
+  binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+  std::vector<VkVertexInputAttributeDescription> attributes(desc.vertexAttributeCount);
+  for (u32 i = 0; i < desc.vertexAttributeCount; i++) {
+    const RHIVertexAttribute& a = desc.vertexAttributes[i];
+    attributes[i] = { a.location, 0, toVkFormat(a.format), a.offset };
+  }
+
+  VkPipelineVertexInputStateCreateInfo vertexInput{};
+  vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vertexInput.vertexBindingDescriptionCount = desc.vertexAttributeCount > 0 ? 1 : 0;
+  vertexInput.pVertexBindingDescriptions = &binding;
+  vertexInput.vertexAttributeDescriptionCount = desc.vertexAttributeCount;
+  vertexInput.pVertexAttributeDescriptions = attributes.data();
+
+  VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+  inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewportState{};
+  viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  viewportState.viewportCount = 1;
+  viewportState.scissorCount = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{};
+  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+  rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rasterizer.lineWidth = 1.0f;
+
+  VkPipelineMultisampleStateCreateInfo multisample{};
+  multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo depthStencil{};
+  depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  const bool hasDepth = desc.depthFormat != RHI_FORMAT_UNDEFINED;
+  depthStencil.depthTestEnable = hasDepth ? VK_TRUE : VK_FALSE;
+  depthStencil.depthWriteEnable = hasDepth ? VK_TRUE : VK_FALSE;
+  depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+
+  VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+  colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  colorBlendAttachment.blendEnable = VK_FALSE;
+
+  VkPipelineColorBlendStateCreateInfo colorBlend{};
+  colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  colorBlend.attachmentCount = 1;
+  colorBlend.pAttachments = &colorBlendAttachment;
+
+  VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+  VkPipelineDynamicStateCreateInfo dynamicState{};
+  dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynamicState.dynamicStateCount = 2;
+  dynamicState.pDynamicStates = dynamicStates;
+
+  VkPushConstantRange pushConstantRange{};
+  pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  pushConstantRange.offset = 0;
+  pushConstantRange.size = desc.pushConstantSize;
+
+  VkPipelineLayoutCreateInfo layoutInfo{};
+  layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  if (desc.pushConstantSize > 0) {
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushConstantRange;
+  }
+
+  VkPipelineLayout layout = VK_NULL_HANDLE;
+  if (vkCreatePipelineLayout(mDevice, &layoutInfo, nullptr, &layout) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create pipeline layout.");
+  }
+
+  const VkFormat colorFormat = toVkFormat(desc.colorFormat);
+  const VkFormat depthFormatVk = hasDepth ? toVkFormat(desc.depthFormat) : VK_FORMAT_UNDEFINED;
+
+  VkPipelineRenderingCreateInfo renderingInfo{};
+  renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+  renderingInfo.colorAttachmentCount = 1;
+  renderingInfo.pColorAttachmentFormats = &colorFormat;
+  renderingInfo.depthAttachmentFormat = depthFormatVk;
+
+  VkGraphicsPipelineCreateInfo pipelineInfo{};
+  pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  pipelineInfo.pNext = &renderingInfo;
+  pipelineInfo.stageCount = 2;
+  pipelineInfo.pStages = stages;
+  pipelineInfo.pVertexInputState = &vertexInput;
+  pipelineInfo.pInputAssemblyState = &inputAssembly;
+  pipelineInfo.pViewportState = &viewportState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState = &multisample;
+  pipelineInfo.pDepthStencilState = &depthStencil;
+  pipelineInfo.pColorBlendState = &colorBlend;
+  pipelineInfo.pDynamicState = &dynamicState;
+  pipelineInfo.layout = layout;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  const VkResult result = vkCreateGraphicsPipelines(mDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
+
+  vkDestroyShaderModule(mDevice, vertModule, nullptr);
+  vkDestroyShaderModule(mDevice, fragModule, nullptr);
+
+  if (result != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create graphics pipeline.");
+  }
+
+  return new VkRHIPipeline{ pipeline, layout };
+}
+
+void VkRHIBackend::destroyPipeline(void* handle) {
+  if (handle == nullptr) return;
+  auto* p = static_cast<VkRHIPipeline*>(handle);
+  vkDestroyPipeline(mDevice, p->pipeline, nullptr);
+  vkDestroyPipelineLayout(mDevice, p->layout, nullptr);
+  delete p;
+}
+
+void VkRHIBackend::bindPipeline(void* cmdBuf, void* pipelineHandle) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  auto* p = static_cast<VkRHIPipeline*>(pipelineHandle);
+  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
+}
+
+void VkRHIBackend::bindVertexBuffer(void* cmdBuf, void* bufferHandle, u64 offset) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  VkBuffer buffer = static_cast<VkBuffer>(bufferHandle);
+  VkDeviceSize vkOffset = offset;
+  vkCmdBindVertexBuffers(commandBuffer, 0, 1, &buffer, &vkOffset);
+}
+
+void VkRHIBackend::bindIndexBuffer(void* cmdBuf, void* bufferHandle, u64 offset) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  VkBuffer buffer = static_cast<VkBuffer>(bufferHandle);
+  vkCmdBindIndexBuffer(commandBuffer, buffer, offset, VK_INDEX_TYPE_UINT32);
+}
+
+void VkRHIBackend::pushConstants(void* cmdBuf, void* pipelineHandle, u32 stageFlags,
+                                  u32 offset, u32 size, const void* data) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  auto* p = static_cast<VkRHIPipeline*>(pipelineHandle);
+
+  VkShaderStageFlags vkStages = 0;
+  if ((stageFlags & RHI_SHADER_STAGE_VERTEX) != 0)   vkStages |= VK_SHADER_STAGE_VERTEX_BIT;
+  if ((stageFlags & RHI_SHADER_STAGE_FRAGMENT) != 0) vkStages |= VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  vkCmdPushConstants(commandBuffer, p->layout, vkStages, offset, size, data);
+}
+
+void VkRHIBackend::drawIndexed(void* cmdBuf, u32 indexCount, u32 instanceCount,
+                                u32 firstIndex, i32 vertexOffset, u32 firstInstance) {
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  vkCmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }

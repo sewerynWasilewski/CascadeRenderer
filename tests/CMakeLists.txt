@@ -4,6 +4,7 @@ add_executable(rg_tests
     test_model_loader.cpp
     test_renderer_graph.cpp
     test_shader_loader.cpp
+    test_vulkan_backend.cpp
 )
 
 target_link_libraries(rg_tests PRIVATE renderer)

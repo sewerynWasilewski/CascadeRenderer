@@ -57,10 +57,11 @@ RGResourceHandle RenderGraph::createPersistentImpl(const char* name, RHIMemoryTy
   return RGResourceHandle{ id, 0, mEpoch };
 }
 
-RGResourceHandle RenderGraph::importImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle) {
+RGResourceHandle RenderGraph::importImpl(const char* name, RHIMemoryType memoryType, RHIResourceDesc desc, void* gpuHandle, RHIUsage initialUsage) {
   assert(gpuHandle != nullptr && "import: gpuHandle must not be null");
   const u32 id = registerResource(name, memoryType, RG_RESOURCE_EXTERNAL, desc);
-  mGPUHandles[id] = gpuHandle;  // caller is responsible for the real initial usage state
+  mGPUHandles[id] = gpuHandle;
+  mLastUsages[id] = initialUsage; // trust the caller - no entry barrier if the first pass declares this same usage
   return RGResourceHandle{ id, 0, mEpoch };
 }
 
@@ -96,6 +97,10 @@ void* RGResources::get(RGResourceHandle handle) {
   return mRG.mGPUHandles[handle.id];
 }
 
+IRHIBackend* RGResources::getBackend() { 
+  assert(mRG.mBackend && "Backend Is not set");
+  return mRG.mBackend;
+}
 
 bool RenderGraph::isValid(RGResourceHandle handle) const {
   if (!handle.valid()) return false;
@@ -306,6 +311,7 @@ void RenderGraph::compile() {
       const RGResourceUsage& next = mUsages[order[i + 1]];
 
       if (curr.resource_id != next.resource_id) continue;
+      assert((curr.usage & RHI_USAGE_PRESENT_SRC) == 0 && "RHI_USAGE_PRESENT_SRC must be the last usage of a resource");
       if (!curr.is_write && !next.is_write && curr.usage == next.usage) continue;
 
       mBarriers.push_back({
@@ -536,7 +542,18 @@ void RenderGraph::execute(void* cmdBuf) {
 
     const RHIPassType rhiType = (pass.flags & RG_PASS_RASTER)  ? RHI_PASS_RASTER  :
                                 (pass.flags & RG_PASS_COMPUTE) ? RHI_PASS_COMPUTE : RHI_PASS_COPY;
-    mBackend->beginPass(cmdBuf, rhiType);
+
+    // First resource this pass writes as a color attachment - single-attachment only for
+    // now, MRT (multiple color attachments) needs beginPass() to take an array later.
+    void* colorAttachment = nullptr;
+    for (u32 u = pass.first_usage; u < pass.first_usage + pass.usage_count; u++) {
+      if (mUsages[u].is_write && (mUsages[u].usage & RHI_USAGE_COLOR_ATTACHMENT) != 0) {
+        colorAttachment = mGPUHandles[mUsages[u].resource_id];
+        break;
+      }
+    }
+
+    mBackend->beginPass(cmdBuf, rhiType, colorAttachment);
     RGResources res(*this);
     mExecutors[passId]->execute(res, cmdBuf);
     mBackend->endPass(cmdBuf);
@@ -571,7 +588,9 @@ void RenderGraph::dumpJSON(const char* path) const {
     id_or_null(r.first_pass);
     fprintf(f, ",\"last_pass\":");
     id_or_null(r.last_pass);
-    fprintf(f, "}%s\n", i + 1 < mResources.size() ? "," : "");
+    fprintf(f, ",\"offset\":%llu,\"size\":%llu}%s\n",
+      (unsigned long long)r.physical_range.offset, (unsigned long long)r.physical_range.size,
+      i + 1 < mResources.size() ? "," : "");
   }
   fprintf(f, "  ],\n");
 

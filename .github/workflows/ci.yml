@@ -16,6 +16,8 @@ jobs:
             cmake \
             ninja-build \
             libvulkan-dev \
+            vulkan-validationlayers \
+            mesa-vulkan-drivers \
             libxkbcommon-dev \
             libwayland-dev \
             wayland-protocols \

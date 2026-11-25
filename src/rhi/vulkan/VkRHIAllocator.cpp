@@ -57,7 +57,8 @@ RHIMemoryBlock VkRHIAllocator::allocate(u64 size, RHIMemoryType memoryType) {
   memReq.memoryTypeBits = 0xFFFFFFFF;
 
   VmaAllocationCreateInfo allocCreateInfo{};
-  allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO;
+  // AUTO needs buffer/image usage info (vmaCreateBuffer/Image) that raw vmaAllocateMemory lacks.
+  allocCreateInfo.usage = VMA_MEMORY_USAGE_UNKNOWN;
 
   switch (memoryType) {
     case RHI_MEMORY_GPU_ONLY:
@@ -106,6 +107,21 @@ void VkRHIAllocator::free(RHIMemoryBlock block) {
   auto allocation = reinterpret_cast<VmaAllocation>(block.handle);
   vmaFreeMemory(mAllocator, allocation);
   mAllocations.erase(block.id);
+}
+
+// TODO: staging buffer + vkCmdCopyBuffer path for RHI_MEMORY_GPU_ONLY data.
+void* VkRHIAllocator::map(RHIMemoryBlock block) {
+  auto allocation = reinterpret_cast<VmaAllocation>(block.handle);
+  void* data = nullptr;
+  if (vmaMapMemory(mAllocator, allocation, &data) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to map GPU memory block via VMA");
+  }
+  return data;
+}
+
+void VkRHIAllocator::unmap(RHIMemoryBlock block) {
+  auto allocation = reinterpret_cast<VmaAllocation>(block.handle);
+  vmaUnmapMemory(mAllocator, allocation);
 }
 
 const VkRHIAllocator::AllocationDetails* VkRHIAllocator::getAllocationDetails(u32 blockId) const {
