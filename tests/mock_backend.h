@@ -13,7 +13,7 @@ struct MockBackend : IRHIBackend {
   void           unmap(RHIMemoryBlock)                             override {}
   void           bindMemory(void*, RHIResourceKind, RHIMemoryBlock, u64) override {}
   void           emitBarrier(const RHIBarrierInfo&, void*)         override {}
-  void           beginPass(void*, RHIPassType, void*)              override {}
+  void           beginPass(void*, RHIPassType, void* const*, u32, void*) override {}
   void           endPass(void*)                                    override {}
   void*          createPipeline(const RHIPipelineDesc&)            override { return reinterpret_cast<void*>(0xDEAD); }
   void           destroyPipeline(void*)                            override {}
@@ -22,6 +22,8 @@ struct MockBackend : IRHIBackend {
   void           bindIndexBuffer(void*, void*, u64)                 override {}
   void           pushConstants(void*, void*, u32, u32, u32, const void*) override {}
   void           drawIndexed(void*, u32, u32, u32, i32, u32)        override {}
+  void*          createSampler(const RHISamplerDesc&)              override { return reinterpret_cast<void*>(0xDEAD); }
+  void           destroySampler(void*)                             override {}
   void           createSwapChain(void*, u32, u32)                   override {}
   void           beginFrame()                                      override {}
   void           endFrame()                                        override {}

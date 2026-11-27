@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <vector>
 #include <cstring>
+#include <algorithm>
 
 namespace {
 
@@ -72,6 +73,31 @@ struct VkRHIPipeline {
   VkPipeline       pipeline = VK_NULL_HANDLE;
   VkPipelineLayout layout   = VK_NULL_HANDLE;
 };
+
+VkFilter toVkFilter(RHIFilterMode mode) {
+  switch (mode) {
+    case RHI_FILTER_NEAREST: return VK_FILTER_NEAREST;
+    case RHI_FILTER_LINEAR:
+    default:                 return VK_FILTER_LINEAR;
+  }
+}
+
+VkSamplerMipmapMode toVkMipmapMode(RHIFilterMode mode) {
+  switch (mode) {
+    case RHI_FILTER_NEAREST: return VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    case RHI_FILTER_LINEAR:
+    default:                 return VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  }
+}
+
+VkSamplerAddressMode toVkAddressMode(RHIAddressMode mode) {
+  switch (mode) {
+    case RHI_ADDRESS_REPEAT:          return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    case RHI_ADDRESS_MIRRORED_REPEAT: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+    case RHI_ADDRESS_CLAMP_TO_EDGE:
+    default:                          return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  }
+}
 
 } // namespace
 
@@ -155,6 +181,8 @@ VkRHIBackend::~VkRHIBackend() {
   mAllocator.shutdown();
   
   if (mDevice != VK_NULL_HANDLE) {
+    vkDeviceWaitIdle(mDevice);
+    
     if (m_ImageAvailableSemaphore != VK_NULL_HANDLE) {
       vkDestroySemaphore(mDevice, m_ImageAvailableSemaphore, nullptr);
       m_ImageAvailableSemaphore = VK_NULL_HANDLE;
@@ -179,6 +207,13 @@ VkRHIBackend::~VkRHIBackend() {
       m_Swapchain = VK_NULL_HANDLE;
     }
 
+    for (VkSampler sampler : m_Samplers) {
+      if (sampler != VK_NULL_HANDLE) {
+        vkDestroySampler(mDevice, sampler, nullptr);
+      }
+    }
+    m_Samplers.clear();
+
     vkDestroyDevice(mDevice, nullptr);
     mDevice = VK_NULL_HANDLE;
   }
@@ -197,6 +232,8 @@ VkRHIBackend::~VkRHIBackend() {
     vkDestroyInstance(mInstance, nullptr);
     mInstance = VK_NULL_HANDLE;
   }
+
+  
 
   std::cout << "[VkRHIBackend] Vulkan destroyed.\n";
 }
@@ -885,31 +922,61 @@ void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {
   }
 }
 
-void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type, void* colorAttachmentHandle) {
+void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type, void* const* colorAttachments, u32 colorAttachmentCount, void* depthAttachment) {
   VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
   if (commandBuffer == VK_NULL_HANDLE) {
     commandBuffer = m_CommandBuffer;
   }
 
   if (type == RHI_PASS_RASTER) {
-    auto* img = static_cast<VkRHIImage*>(colorAttachmentHandle);
-    if (img == nullptr) return;
+    if (colorAttachmentCount > RHI_MAX_COLOR_ATTACHMENTS) {
+      throw std::runtime_error("beginPass: colorAttachmentCount exceeds RHI_MAX_COLOR_ATTACHMENTS.");
+    }
 
-    VkRenderingAttachmentInfo colorAttachment{};
-    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    colorAttachment.imageView = img->imageView;
-    colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachment.clearValue = { {0.05f, 0.05f, 0.08f, 1.0f} };
+    VkRenderingAttachmentInfo vkAttachments[RHI_MAX_COLOR_ATTACHMENTS]{};
+    u32 validCount = 0;
+
+    for (u32 i = 0; i < colorAttachmentCount; ++i) {
+      void* handle = (colorAttachments != nullptr) ? colorAttachments[i] : nullptr;
+      auto* img = static_cast<VkRHIImage*>(handle);
+      if (img == nullptr || img->imageView == VK_NULL_HANDLE) {
+        continue;
+      }
+
+      VkRenderingAttachmentInfo& att = vkAttachments[validCount++];
+      att.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+      att.imageView = img->imageView;
+      att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+      att.clearValue = { {0.05f, 0.05f, 0.08f, 1.0f} };
+    }
+
+    auto* depthImg = static_cast<VkRHIImage*>(depthAttachment);
+    const bool hasDepthAttachment = (depthImg != nullptr && depthImg->imageView != VK_NULL_HANDLE);
+
+    VkRenderingAttachmentInfo depthInfo{};
+    if (hasDepthAttachment) {
+      depthInfo.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+      depthInfo.imageView = depthImg->imageView;
+      depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+      depthInfo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      depthInfo.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+      depthInfo.clearValue.depthStencil = { 1.0f, 0 };
+    }
+
+    if (validCount == 0 && !hasDepthAttachment) {
+      return;
+    }
 
     VkRenderingInfo renderingInfo{};
     renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
     renderingInfo.renderArea.offset = { 0, 0 };
     renderingInfo.renderArea.extent = m_SwapchainExtent;
     renderingInfo.layerCount = 1;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments = &colorAttachment;
+    renderingInfo.colorAttachmentCount = validCount;
+    renderingInfo.pColorAttachments = validCount > 0 ? vkAttachments : nullptr;
+    renderingInfo.pDepthAttachment = hasDepthAttachment ? &depthInfo : nullptr;
 
     vkCmdBeginRendering(commandBuffer, &renderingInfo);
     m_InRendering = true;
@@ -929,6 +996,7 @@ void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type, void* colorAttachme
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
   }
 }
+
 void VkRHIBackend::endPass(void* cmdBuf) {
   VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
   if (commandBuffer == VK_NULL_HANDLE) {
@@ -942,6 +1010,10 @@ void VkRHIBackend::endPass(void* cmdBuf) {
 }
 
 void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {
+  if (desc.colorAttachmentCount > RHI_MAX_COLOR_ATTACHMENTS) {
+    throw std::runtime_error("createPipeline: colorAttachmentCount exceeds RHI_MAX_COLOR_ATTACHMENTS.");
+  }
+
   const std::vector<char> vertCode = readSpirvFile(desc.vertexShaderPath);
   const std::vector<char> fragCode = readSpirvFile(desc.fragmentShaderPath);
   VkShaderModule vertModule = createShaderModule(mDevice, vertCode);
@@ -1002,15 +1074,20 @@ void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {
   depthStencil.depthWriteEnable = hasDepth ? VK_TRUE : VK_FALSE;
   depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
 
-  VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-  colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-  colorBlendAttachment.blendEnable = VK_FALSE;
+  VkPipelineColorBlendAttachmentState colorBlendAttachments[RHI_MAX_COLOR_ATTACHMENTS]{};
+  VkFormat vkColorFormats[RHI_MAX_COLOR_ATTACHMENTS]{};
+
+  for (u32 i = 0; i < desc.colorAttachmentCount; ++i) {
+    colorBlendAttachments[i].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                              VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachments[i].blendEnable = VK_FALSE;
+    vkColorFormats[i] = toVkFormat(desc.colorFormats[i]);
+  }
 
   VkPipelineColorBlendStateCreateInfo colorBlend{};
   colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-  colorBlend.attachmentCount = 1;
-  colorBlend.pAttachments = &colorBlendAttachment;
+  colorBlend.attachmentCount = desc.colorAttachmentCount;
+  colorBlend.pAttachments = desc.colorAttachmentCount > 0 ? colorBlendAttachments : nullptr;
 
   VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
   VkPipelineDynamicStateCreateInfo dynamicState{};
@@ -1032,16 +1109,17 @@ void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {
 
   VkPipelineLayout layout = VK_NULL_HANDLE;
   if (vkCreatePipelineLayout(mDevice, &layoutInfo, nullptr, &layout) != VK_SUCCESS) {
+    vkDestroyShaderModule(mDevice, vertModule, nullptr);
+    vkDestroyShaderModule(mDevice, fragModule, nullptr);
     throw std::runtime_error("Failed to create pipeline layout.");
   }
 
-  const VkFormat colorFormat = toVkFormat(desc.colorFormat);
   const VkFormat depthFormatVk = hasDepth ? toVkFormat(desc.depthFormat) : VK_FORMAT_UNDEFINED;
 
   VkPipelineRenderingCreateInfo renderingInfo{};
   renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-  renderingInfo.colorAttachmentCount = 1;
-  renderingInfo.pColorAttachmentFormats = &colorFormat;
+  renderingInfo.colorAttachmentCount = desc.colorAttachmentCount;
+  renderingInfo.pColorAttachmentFormats = desc.colorAttachmentCount > 0 ? vkColorFormats : nullptr;
   renderingInfo.depthAttachmentFormat = depthFormatVk;
 
   VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -1066,6 +1144,7 @@ void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {
   vkDestroyShaderModule(mDevice, fragModule, nullptr);
 
   if (result != VK_SUCCESS) {
+    vkDestroyPipelineLayout(mDevice, layout, nullptr);
     throw std::runtime_error("Failed to create graphics pipeline.");
   }
 
@@ -1115,4 +1194,45 @@ void VkRHIBackend::drawIndexed(void* cmdBuf, u32 indexCount, u32 instanceCount,
                                 u32 firstIndex, i32 vertexOffset, u32 firstInstance) {
   VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
   vkCmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+}
+
+void* VkRHIBackend::createSampler(const RHISamplerDesc& desc) {
+  VkSamplerCreateInfo samplerInfo{};
+  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  samplerInfo.magFilter = toVkFilter(desc.magFilter);
+  samplerInfo.minFilter = toVkFilter(desc.minFilter);
+  samplerInfo.mipmapMode = toVkMipmapMode(desc.mipmapMode);
+  samplerInfo.addressModeU = toVkAddressMode(desc.addressMode);
+  samplerInfo.addressModeV = toVkAddressMode(desc.addressMode);
+  samplerInfo.addressModeW = toVkAddressMode(desc.addressMode);
+  samplerInfo.mipLodBias = 0.0f;
+
+  const bool anisoEnabled = desc.maxAnisotropy > 1.0f;
+  samplerInfo.anisotropyEnable = anisoEnabled ? VK_TRUE : VK_FALSE;
+  samplerInfo.maxAnisotropy = anisoEnabled ? desc.maxAnisotropy : 1.0f;
+
+  samplerInfo.compareEnable = VK_FALSE;
+  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+  samplerInfo.minLod = 0.0f;
+  samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+  samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+  samplerInfo.unnormalizedCoordinates = VK_FALSE;
+
+  VkSampler sampler = VK_NULL_HANDLE;
+  if (vkCreateSampler(mDevice, &samplerInfo, nullptr, &sampler) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create Vulkan sampler.");
+  }
+
+  m_Samplers.push_back(sampler);
+  return static_cast<void*>(sampler);
+}
+
+void VkRHIBackend::destroySampler(void* handle) {
+  if (handle == nullptr) return;
+  VkSampler sampler = static_cast<VkSampler>(handle);
+  auto it = std::find(m_Samplers.begin(), m_Samplers.end(), sampler);
+  if (it != m_Samplers.end()) {
+    vkDestroySampler(mDevice, *it, nullptr);
+    m_Samplers.erase(it);
+  }
 }

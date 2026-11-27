@@ -34,8 +34,10 @@ struct IRHIBackend {
   virtual void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) = 0;
 
   // Pass framing - called by execute() around each pass executor. See issue #12.
-  virtual void beginPass(void* cmdBuf, RHIPassType type, void* colorAttachment) = 0;
+  virtual void beginPass(void* cmdBuf, RHIPassType type, void* const* colorAttachments, u32 colorAttachmentCount, void* depthAttachment) = 0;
   virtual void endPass(void* cmdBuf) = 0;
+  virtual void* createSampler(const RHISamplerDesc& desc) = 0;
+  virtual void  destroySampler(void* handle) = 0;
 
   // Pipeline and draw-call recording - void*/enum based, no concrete graphics API leaks upward.
   virtual void* createPipeline(const RHIPipelineDesc& desc) = 0;

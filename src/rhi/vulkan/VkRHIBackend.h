@@ -40,8 +40,10 @@ public:
 
   void bindMemory(void* gpuHandle, RHIResourceKind kind, RHIMemoryBlock block, u64 offset) override;
   void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) override;
-  void beginPass(void* cmdBuf, RHIPassType type, void* colorAttachment) override;
+  void beginPass(void* cmdBuf, RHIPassType type, void* const* colorAttachments, u32 colorAttachmentCount, void* depthAttachment) override;
   void endPass(void* cmdBuf) override;
+  void* createSampler(const RHISamplerDesc& desc) override;
+  void  destroySampler(void* handle) override;
 
   void* createPipeline(const RHIPipelineDesc& desc) override;
   void  destroyPipeline(void* handle) override;
@@ -83,6 +85,7 @@ private:
   VkQueue                  mGraphicsQueue  = VK_NULL_HANDLE;
   u32                      mGraphicsQueueFamily = RG_INVALID_ID;
   VkSwapchainKHR           m_Swapchain = VK_NULL_HANDLE;
+  std::vector<VkSampler> m_Samplers;
   std::vector<VkImage>     m_SwapchainImages;
   std::vector<VkImageView> m_SwapchainImageViews;
   std::vector<VkRHIImage>  m_SwapchainRHIImages; // built once, no per-frame allocation

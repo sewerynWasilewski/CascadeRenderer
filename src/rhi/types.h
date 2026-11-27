@@ -146,14 +146,36 @@ struct RHIVertexAttribute {
   RHIVertexFormat format;
 };
 
+constexpr u32 RHI_MAX_COLOR_ATTACHMENTS = 8;
+
 // Describes a single raster pipeline.
 struct RHIPipelineDesc {
   const char*                vertexShaderPath;
   const char*                fragmentShaderPath;
-  RHITextureFormat           colorFormat;
+  RHITextureFormat           colorFormats[RHI_MAX_COLOR_ATTACHMENTS] = { RHI_FORMAT_UNDEFINED };
+  u32                        colorAttachmentCount = 0;
   RHITextureFormat           depthFormat      = RHI_FORMAT_UNDEFINED; // UNDEFINED = no depth attachment
   u32                        pushConstantSize = 0;                    // vertex-stage push constant range
   const RHIVertexAttribute*  vertexAttributes = nullptr;
   u32                        vertexAttributeCount = 0;
   u32                        vertexStride         = 0;                // bytes per vertex
+};
+
+enum RHIFilterMode : u32 {
+  RHI_FILTER_NEAREST = 0,
+  RHI_FILTER_LINEAR  = 1,
+};
+
+enum RHIAddressMode : u32 {
+  RHI_ADDRESS_REPEAT          = 0,
+  RHI_ADDRESS_MIRRORED_REPEAT = 1,
+  RHI_ADDRESS_CLAMP_TO_EDGE   = 2,
+};
+
+struct RHISamplerDesc {
+  RHIFilterMode  minFilter     = RHI_FILTER_LINEAR;
+  RHIFilterMode  magFilter     = RHI_FILTER_LINEAR;
+  RHIFilterMode  mipmapMode    = RHI_FILTER_LINEAR;
+  RHIAddressMode addressMode   = RHI_ADDRESS_CLAMP_TO_EDGE;
+  float          maxAnisotropy = 1.0f;
 };

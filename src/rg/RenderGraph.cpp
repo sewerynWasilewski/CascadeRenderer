@@ -545,15 +545,27 @@ void RenderGraph::execute(void* cmdBuf) {
 
     // First resource this pass writes as a color attachment - single-attachment only for
     // now, MRT (multiple color attachments) needs beginPass() to take an array later.
-    void* colorAttachment = nullptr;
+    void* colorAttachments[RHI_MAX_COLOR_ATTACHMENTS]{};
+    u32 colorAttachmentCount = 0;
+    void* depthAttachment = nullptr;
+
     for (u32 u = pass.first_usage; u < pass.first_usage + pass.usage_count; u++) {
-      if (mUsages[u].is_write && (mUsages[u].usage & RHI_USAGE_COLOR_ATTACHMENT) != 0) {
-        colorAttachment = mGPUHandles[mUsages[u].resource_id];
-        break;
+      if (!mUsages[u].is_write) continue;
+      void* handle = mGPUHandles[mUsages[u].resource_id];
+      if (!handle) continue;
+
+      if ((mUsages[u].usage & RHI_USAGE_COLOR_ATTACHMENT) != 0) {
+        if (colorAttachmentCount < RHI_MAX_COLOR_ATTACHMENTS) {
+          colorAttachments[colorAttachmentCount++] = handle;
+        }
+      } else if ((mUsages[u].usage & RHI_USAGE_DEPTH_ATTACHMENT) != 0) {
+        if (depthAttachment == nullptr) {
+          depthAttachment = handle;
+        }
       }
     }
 
-    mBackend->beginPass(cmdBuf, rhiType, colorAttachment);
+    mBackend->beginPass(cmdBuf, rhiType, colorAttachments, colorAttachmentCount, depthAttachment);
     RGResources res(*this);
     mExecutors[passId]->execute(res, cmdBuf);
     mBackend->endPass(cmdBuf);
