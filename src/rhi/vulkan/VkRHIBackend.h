@@ -4,6 +4,7 @@
 #include "VkRHIAllocator.h"
 #include "../../rg/RGTypes.h"
 #include <vector>
+#include <algorithm>
 
 struct VkRHINativeHandles {
   VkInstance       instance;
@@ -19,6 +20,7 @@ struct VkRHIImage {
   VkImage          image     = VK_NULL_HANDLE;
   VkImageView      imageView = VK_NULL_HANDLE;
   RHITextureFormat format    = RHI_FORMAT_UNDEFINED;
+  VkExtent2D       extent    = {0, 0};
 };
 
 class VkRHIBackend final : public IRHIBackend {
@@ -58,6 +60,13 @@ public:
   void endFrame() override;
   void createSwapChain(void* nativeSurface, u32 framebufferWidth, u32 framebufferHeight) override;
 
+  void* createDescriptorSetLayout(const RHIDescriptorBinding* bindings, u32 bindingCount) override;
+  void  destroyDescriptorSetLayout(void* layoutHandle) override;
+  void* allocateDescriptorSet(void* layoutHandle) override;
+  void  freeDescriptorSet(void* setHandle) override;
+  void  updateDescriptorSet(void* setHandle, const RHIDescriptorWrite* writes, u32 writeCount) override;
+  void  bindDescriptorSet(void* cmdBuf, void* pipelineHandle, u32 setIndex, void* setHandle) override;
+
   void* getCurrentCommandBuffer()    const override { return m_CommandBuffer; }
   void* getCurrentSwapchainTarget()  const override;
   void* getCurrentSwapchainImage() const override;
@@ -95,6 +104,8 @@ private:
   VkSemaphore m_ImageAvailableSemaphore = VK_NULL_HANDLE;
   VkSemaphore m_RenderFinishedSemaphore = VK_NULL_HANDLE;
   bool m_InRendering = false; // true between vkCmdBeginRendering and vkCmdEndRendering - passes with no color attachment skip both
+  VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
+  std::vector<VkDescriptorSetLayout> m_DescriptorSetLayouts;
 
   VkRHINativeHandles mNativeHandles{};
   VkRHIAllocator mAllocator;

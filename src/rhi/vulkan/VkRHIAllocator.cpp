@@ -53,7 +53,7 @@ RHIMemoryBlock VkRHIAllocator::allocate(u64 size, RHIMemoryType memoryType) {
 
   VkMemoryRequirements memReq{};
   memReq.size           = size;
-  memReq.alignment      = 256;
+  memReq.alignment      = 65536;
   memReq.memoryTypeBits = 0xFFFFFFFF;
 
   VmaAllocationCreateInfo allocCreateInfo{};

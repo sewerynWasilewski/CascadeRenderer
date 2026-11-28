@@ -57,6 +57,14 @@ struct IRHIBackend {
   virtual void* getCurrentSwapchainTarget() const = 0;
   virtual void* getCurrentSwapchainImage() const = 0; 
   virtual void  getSwapchainExtent(u32& width, u32& height) const = 0;
+  
+  virtual void* createDescriptorSetLayout(const RHIDescriptorBinding* bindings, u32 bindingCount) = 0;
+  virtual void  destroyDescriptorSetLayout(void* layoutHandle) = 0;
+
+  virtual void* allocateDescriptorSet(void* layoutHandle) = 0;
+  virtual void freeDescriptorSet(void* setHandle) = 0;
+  virtual void  updateDescriptorSet(void* setHandle, const RHIDescriptorWrite* writes, u32 writeCount) = 0;
+  virtual void  bindDescriptorSet(void* cmdBuf, void* pipelineHandle, u32 setIndex, void* setHandle) = 0;
 
   virtual const void* getNativeHandles() const = 0;
 };

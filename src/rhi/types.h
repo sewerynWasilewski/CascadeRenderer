@@ -159,6 +159,8 @@ struct RHIPipelineDesc {
   const RHIVertexAttribute*  vertexAttributes = nullptr;
   u32                        vertexAttributeCount = 0;
   u32                        vertexStride         = 0;                // bytes per vertex
+  void* descriptorSetLayout = nullptr;
+  u32   pushConstantStages  = RHI_SHADER_STAGE_VERTEX;
 };
 
 enum RHIFilterMode : u32 {
@@ -178,4 +180,26 @@ struct RHISamplerDesc {
   RHIFilterMode  mipmapMode    = RHI_FILTER_LINEAR;
   RHIAddressMode addressMode   = RHI_ADDRESS_CLAMP_TO_EDGE;
   float          maxAnisotropy = 1.0f;
+};
+
+enum RHIDescriptorType : u32 {
+  RHI_DESCRIPTOR_COMBINED_IMAGE_SAMPLER = 0,
+  RHI_DESCRIPTOR_UNIFORM_BUFFER         = 1,
+};
+
+struct RHIDescriptorBinding {
+  u32               binding = 0;
+  RHIDescriptorType type    = RHI_DESCRIPTOR_COMBINED_IMAGE_SAMPLER;
+  u32               count   = 1;
+  u32               stages  = RHI_SHADER_STAGE_FRAGMENT;
+};
+
+struct RHIDescriptorWrite {
+  u32               binding       = 0;
+  RHIDescriptorType type          = RHI_DESCRIPTOR_COMBINED_IMAGE_SAMPLER;
+  void*             textureHandle = nullptr;
+  void*             samplerHandle = nullptr;
+  void*             bufferHandle  = nullptr;
+  u64               bufferOffset  = 0;
+  u64               bufferRange   = 0;
 };

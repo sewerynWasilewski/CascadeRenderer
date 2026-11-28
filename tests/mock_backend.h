@@ -32,4 +32,10 @@ struct MockBackend : IRHIBackend {
   void*          getCurrentSwapchainImage()                   const override { return nullptr; }
   void           getSwapchainExtent(u32& w, u32& h)           const override { w = 0; h = 0; }
   const void*    getNativeHandles()                           const override { return nullptr; }
+  void*          createDescriptorSetLayout(const RHIDescriptorBinding*, u32) override { return reinterpret_cast<void*>(0xDEAD); }
+  void           destroyDescriptorSetLayout(void*)                             override {}
+  void*          allocateDescriptorSet(void*)                                override { return reinterpret_cast<void*>(0xDEAD); }
+  void           freeDescriptorSet(void*)                                    override {}
+  void           updateDescriptorSet(void*, const RHIDescriptorWrite*, u32)  override {}
+  void           bindDescriptorSet(void*, void*, u32, void*)                 override {}
 };
