@@ -4,6 +4,7 @@
 #include "VkRHIAllocator.h"
 #include "../../rg/RGTypes.h"
 #include <vector>
+#include <algorithm>
 
 struct VkRHINativeHandles {
   VkInstance       instance;
@@ -19,6 +20,7 @@ struct VkRHIImage {
   VkImage          image     = VK_NULL_HANDLE;
   VkImageView      imageView = VK_NULL_HANDLE;
   RHITextureFormat format    = RHI_FORMAT_UNDEFINED;
+  VkExtent2D       extent    = {0, 0};
 };
 
 class VkRHIBackend final : public IRHIBackend {
@@ -40,8 +42,10 @@ public:
 
   void bindMemory(void* gpuHandle, RHIResourceKind kind, RHIMemoryBlock block, u64 offset) override;
   void emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) override;
-  void beginPass(void* cmdBuf, RHIPassType type, void* colorAttachment) override;
+  void beginPass(void* cmdBuf, RHIPassType type, void* const* colorAttachments, u32 colorAttachmentCount, void* depthAttachment) override;
   void endPass(void* cmdBuf) override;
+  void* createSampler(const RHISamplerDesc& desc) override;
+  void  destroySampler(void* handle) override;
 
   void* createPipeline(const RHIPipelineDesc& desc) override;
   void  destroyPipeline(void* handle) override;
@@ -55,6 +59,13 @@ public:
   void beginFrame() override;
   void endFrame() override;
   void createSwapChain(void* nativeSurface, u32 framebufferWidth, u32 framebufferHeight) override;
+
+  void* createDescriptorSetLayout(const RHIDescriptorBinding* bindings, u32 bindingCount) override;
+  void  destroyDescriptorSetLayout(void* layoutHandle) override;
+  void* allocateDescriptorSet(void* layoutHandle) override;
+  void  freeDescriptorSet(void* setHandle) override;
+  void  updateDescriptorSet(void* setHandle, const RHIDescriptorWrite* writes, u32 writeCount) override;
+  void  bindDescriptorSet(void* cmdBuf, void* pipelineHandle, u32 setIndex, void* setHandle) override;
 
   void* getCurrentCommandBuffer()    const override { return m_CommandBuffer; }
   void* getCurrentSwapchainTarget()  const override;
@@ -83,6 +94,7 @@ private:
   VkQueue                  mGraphicsQueue  = VK_NULL_HANDLE;
   u32                      mGraphicsQueueFamily = RG_INVALID_ID;
   VkSwapchainKHR           m_Swapchain = VK_NULL_HANDLE;
+  std::vector<VkSampler> m_Samplers;
   std::vector<VkImage>     m_SwapchainImages;
   std::vector<VkImageView> m_SwapchainImageViews;
   std::vector<VkRHIImage>  m_SwapchainRHIImages; // built once, no per-frame allocation
@@ -92,6 +104,8 @@ private:
   VkSemaphore m_ImageAvailableSemaphore = VK_NULL_HANDLE;
   VkSemaphore m_RenderFinishedSemaphore = VK_NULL_HANDLE;
   bool m_InRendering = false; // true between vkCmdBeginRendering and vkCmdEndRendering - passes with no color attachment skip both
+  VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
+  std::vector<VkDescriptorSetLayout> m_DescriptorSetLayouts;
 
   VkRHINativeHandles mNativeHandles{};
   VkRHIAllocator mAllocator;

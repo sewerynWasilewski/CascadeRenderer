@@ -13,7 +13,7 @@ struct MockBackend : IRHIBackend {
   void           unmap(RHIMemoryBlock)                             override {}
   void           bindMemory(void*, RHIResourceKind, RHIMemoryBlock, u64) override {}
   void           emitBarrier(const RHIBarrierInfo&, void*)         override {}
-  void           beginPass(void*, RHIPassType, void*)              override {}
+  void           beginPass(void*, RHIPassType, void* const*, u32, void*) override {}
   void           endPass(void*)                                    override {}
   void*          createPipeline(const RHIPipelineDesc&)            override { return reinterpret_cast<void*>(0xDEAD); }
   void           destroyPipeline(void*)                            override {}
@@ -22,6 +22,8 @@ struct MockBackend : IRHIBackend {
   void           bindIndexBuffer(void*, void*, u64)                 override {}
   void           pushConstants(void*, void*, u32, u32, u32, const void*) override {}
   void           drawIndexed(void*, u32, u32, u32, i32, u32)        override {}
+  void*          createSampler(const RHISamplerDesc&)              override { return reinterpret_cast<void*>(0xDEAD); }
+  void           destroySampler(void*)                             override {}
   void           createSwapChain(void*, u32, u32)                   override {}
   void           beginFrame()                                      override {}
   void           endFrame()                                        override {}
@@ -30,4 +32,10 @@ struct MockBackend : IRHIBackend {
   void*          getCurrentSwapchainImage()                   const override { return nullptr; }
   void           getSwapchainExtent(u32& w, u32& h)           const override { w = 0; h = 0; }
   const void*    getNativeHandles()                           const override { return nullptr; }
+  void*          createDescriptorSetLayout(const RHIDescriptorBinding*, u32) override { return reinterpret_cast<void*>(0xDEAD); }
+  void           destroyDescriptorSetLayout(void*)                             override {}
+  void*          allocateDescriptorSet(void*)                                override { return reinterpret_cast<void*>(0xDEAD); }
+  void           freeDescriptorSet(void*)                                    override {}
+  void           updateDescriptorSet(void*, const RHIDescriptorWrite*, u32)  override {}
+  void           bindDescriptorSet(void*, void*, u32, void*)                 override {}
 };

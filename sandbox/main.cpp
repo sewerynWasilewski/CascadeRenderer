@@ -121,17 +121,20 @@ int main(int argc, char** argv) {
       { 1, offsetof(Vertex, normal),   RHI_VERTEX_FLOAT3 },
       { 2, offsetof(Vertex, uv),       RHI_VERTEX_FLOAT2 },
     };
-    void* cubePipeline = backend->createPipeline(RHIPipelineDesc{
-      SHADER_DIR "/basic.vert.spv",
-      SHADER_DIR "/basic.frag.spv",
-      RHI_FORMAT_BGRA8_SRGB, // matches chooseSwapSurfaceFormat()'s preferred format - TODO:
-                             // query the real swapchain format instead of assuming it
-      RHI_FORMAT_UNDEFINED,   // no depth attachment - cube is convex, backface cull is enough
-      sizeof(glm::mat4),
-      cubeAttributes,
-      3,
-      sizeof(Vertex),
-    });
+    
+
+    RHIPipelineDesc cubePipelineDesc{};
+    cubePipelineDesc.vertexShaderPath     = SHADER_DIR "/basic.vert.spv";
+    cubePipelineDesc.fragmentShaderPath   = SHADER_DIR "/basic.frag.spv";
+    cubePipelineDesc.colorFormats[0]      = RHI_FORMAT_BGRA8_SRGB; // matches chooseSwapSurfaceFormat()'s preferred format
+    cubePipelineDesc.colorAttachmentCount = 1;
+    cubePipelineDesc.depthFormat        = RHI_FORMAT_UNDEFINED;   // no depth attachment - cube is convex, backface cull is enough
+    cubePipelineDesc.pushConstantSize   = sizeof(glm::mat4);
+    cubePipelineDesc.vertexAttributes     = cubeAttributes;
+    cubePipelineDesc.vertexAttributeCount = 3;
+    cubePipelineDesc.vertexStride       = sizeof(Vertex);
+
+    void* cubePipeline = backend->createPipeline(cubePipelineDesc);
 
     PerspectiveCamera camera(60.0f, static_cast<float>(fbWidth) / static_cast<float>(fbHeight), 0.1f, 100.0f);
     camera.setPosition({0.0f, 0.0f, 3.0f});

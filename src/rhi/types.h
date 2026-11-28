@@ -146,14 +146,60 @@ struct RHIVertexAttribute {
   RHIVertexFormat format;
 };
 
+constexpr u32 RHI_MAX_COLOR_ATTACHMENTS = 8;
+
 // Describes a single raster pipeline.
 struct RHIPipelineDesc {
   const char*                vertexShaderPath;
   const char*                fragmentShaderPath;
-  RHITextureFormat           colorFormat;
+  RHITextureFormat           colorFormats[RHI_MAX_COLOR_ATTACHMENTS] = { RHI_FORMAT_UNDEFINED };
+  u32                        colorAttachmentCount = 0;
   RHITextureFormat           depthFormat      = RHI_FORMAT_UNDEFINED; // UNDEFINED = no depth attachment
   u32                        pushConstantSize = 0;                    // vertex-stage push constant range
   const RHIVertexAttribute*  vertexAttributes = nullptr;
   u32                        vertexAttributeCount = 0;
   u32                        vertexStride         = 0;                // bytes per vertex
+  void* descriptorSetLayout = nullptr;
+  RHIShaderStage             pushConstantStages = RHI_SHADER_STAGE_VERTEX;
+};
+
+enum RHIFilterMode : u32 {
+  RHI_FILTER_NEAREST = 0,
+  RHI_FILTER_LINEAR  = 1,
+};
+
+enum RHIAddressMode : u32 {
+  RHI_ADDRESS_REPEAT          = 0,
+  RHI_ADDRESS_MIRRORED_REPEAT = 1,
+  RHI_ADDRESS_CLAMP_TO_EDGE   = 2,
+};
+
+struct RHISamplerDesc {
+  RHIFilterMode  minFilter     = RHI_FILTER_LINEAR;
+  RHIFilterMode  magFilter     = RHI_FILTER_LINEAR;
+  RHIFilterMode  mipmapMode    = RHI_FILTER_LINEAR;
+  RHIAddressMode addressMode   = RHI_ADDRESS_CLAMP_TO_EDGE;
+  float          maxAnisotropy = 1.0f;
+};
+
+enum RHIDescriptorType : u32 {
+  RHI_DESCRIPTOR_COMBINED_IMAGE_SAMPLER = 0,
+  RHI_DESCRIPTOR_UNIFORM_BUFFER         = 1,
+};
+
+struct RHIDescriptorBinding {
+  u32               binding = 0;
+  RHIDescriptorType type    = RHI_DESCRIPTOR_COMBINED_IMAGE_SAMPLER;
+  u32               count   = 1;
+  u32               stages  = RHI_SHADER_STAGE_FRAGMENT;
+};
+
+struct RHIDescriptorWrite {
+  u32               binding       = 0;
+  RHIDescriptorType type          = RHI_DESCRIPTOR_COMBINED_IMAGE_SAMPLER;
+  void*             textureHandle = nullptr;
+  void*             samplerHandle = nullptr;
+  void*             bufferHandle  = nullptr;
+  u64               bufferOffset  = 0;
+  u64               bufferRange   = 0;
 };

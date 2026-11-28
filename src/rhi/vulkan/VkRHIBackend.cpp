@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <vector>
 #include <cstring>
+#include <algorithm>
+#include <string>
 
 namespace {
 
@@ -59,7 +61,8 @@ VkImageLayout toVkImageLayout(RHIUsage usage) {
   if (usage == RHI_USAGE_NONE) return VK_IMAGE_LAYOUT_UNDEFINED;
   if ((usage & RHI_USAGE_COLOR_ATTACHMENT) != 0) return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   if ((usage & RHI_USAGE_DEPTH_ATTACHMENT) != 0) return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-  if ((usage & (RHI_USAGE_SAMPLED_TEXTURE | RHI_USAGE_STORAGE_TEXTURE)) != 0) return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  if ((usage & RHI_USAGE_STORAGE_TEXTURE) != 0) return VK_IMAGE_LAYOUT_GENERAL;
+  if ((usage & RHI_USAGE_SAMPLED_TEXTURE) != 0) return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   if ((usage & RHI_USAGE_TRANSFER_SRC) != 0) return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
   if ((usage & RHI_USAGE_TRANSFER_DST) != 0) return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
   if ((usage & RHI_USAGE_PRESENT_SRC) != 0) return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
@@ -72,6 +75,51 @@ struct VkRHIPipeline {
   VkPipeline       pipeline = VK_NULL_HANDLE;
   VkPipelineLayout layout   = VK_NULL_HANDLE;
 };
+
+VkFilter toVkFilter(RHIFilterMode mode) {
+  switch (mode) {
+    case RHI_FILTER_NEAREST: return VK_FILTER_NEAREST;
+    case RHI_FILTER_LINEAR:
+    default:                 return VK_FILTER_LINEAR;
+  }
+}
+
+VkSamplerMipmapMode toVkMipmapMode(RHIFilterMode mode) {
+  switch (mode) {
+    case RHI_FILTER_NEAREST: return VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    case RHI_FILTER_LINEAR:
+    default:                 return VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  }
+}
+
+VkSamplerAddressMode toVkAddressMode(RHIAddressMode mode) {
+  switch (mode) {
+    case RHI_ADDRESS_REPEAT:          return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    case RHI_ADDRESS_MIRRORED_REPEAT: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+    case RHI_ADDRESS_CLAMP_TO_EDGE:
+    default:                          return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  }
+}
+
+VkDescriptorType toVkDescriptorType(RHIDescriptorType type) {
+  switch (type) {
+    case RHI_DESCRIPTOR_UNIFORM_BUFFER:
+      return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    case RHI_DESCRIPTOR_COMBINED_IMAGE_SAMPLER:
+    default:
+      return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  }
+}
+
+VkShaderStageFlags toVkShaderStages(u32 stages) {
+  VkShaderStageFlags flags = 0;
+  if ((stages & RHI_SHADER_STAGE_VERTEX) != 0) flags |= VK_SHADER_STAGE_VERTEX_BIT;
+  if ((stages & RHI_SHADER_STAGE_FRAGMENT) != 0) flags |= VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  if (flags == 0) throw std::runtime_error("Error parsing RHIShaderStage to VkShaderStages");
+
+  return flags;
+}
 
 } // namespace
 
@@ -152,9 +200,25 @@ VkRHIBackend::VkRHIBackend() {
 }
 
 VkRHIBackend::~VkRHIBackend() {
-  mAllocator.shutdown();
-  
   if (mDevice != VK_NULL_HANDLE) {
+    vkDeviceWaitIdle(mDevice);
+  }
+  mAllocator.shutdown();
+
+  if (mDevice != VK_NULL_HANDLE) {
+
+    for (VkDescriptorSetLayout layout : m_DescriptorSetLayouts) {
+      if (layout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(mDevice, layout, nullptr);
+      }
+    }
+    m_DescriptorSetLayouts.clear();
+
+    if (m_DescriptorPool != VK_NULL_HANDLE) {
+      vkDestroyDescriptorPool(mDevice, m_DescriptorPool, nullptr);
+      m_DescriptorPool = VK_NULL_HANDLE;
+    }
+    
     if (m_ImageAvailableSemaphore != VK_NULL_HANDLE) {
       vkDestroySemaphore(mDevice, m_ImageAvailableSemaphore, nullptr);
       m_ImageAvailableSemaphore = VK_NULL_HANDLE;
@@ -179,6 +243,13 @@ VkRHIBackend::~VkRHIBackend() {
       m_Swapchain = VK_NULL_HANDLE;
     }
 
+    for (VkSampler sampler : m_Samplers) {
+      if (sampler != VK_NULL_HANDLE) {
+        vkDestroySampler(mDevice, sampler, nullptr);
+      }
+    }
+    m_Samplers.clear();
+
     vkDestroyDevice(mDevice, nullptr);
     mDevice = VK_NULL_HANDLE;
   }
@@ -197,6 +268,8 @@ VkRHIBackend::~VkRHIBackend() {
     vkDestroyInstance(mInstance, nullptr);
     mInstance = VK_NULL_HANDLE;
   }
+
+  
 
   std::cout << "[VkRHIBackend] Vulkan destroyed.\n";
 }
@@ -511,7 +584,7 @@ void VkRHIBackend::createSwapChain(void* nativeSurface, u32 framebufferWidth, u3
   m_SwapchainRHIImages.resize(imageCount);
   for (size_t i = 0; i < imageCount; i++) {
     m_SwapchainRHIImages[i] = VkRHIImage{
-      m_SwapchainImages[i], m_SwapchainImageViews[i], RHI_FORMAT_BGRA8_SRGB
+      m_SwapchainImages[i], m_SwapchainImageViews[i], RHI_FORMAT_BGRA8_SRGB, extent
     };
   }
 
@@ -679,7 +752,7 @@ void* VkRHIBackend::createImage(const RHITextureDesc& desc) {
     throw std::runtime_error("Failed to create Vulkan image.");
   }
 
-  return new VkRHIImage{image, VK_NULL_HANDLE, desc.format}; // view made later by bindMemory()
+  return new VkRHIImage{image, VK_NULL_HANDLE, desc.format, { desc.width, desc.height }};
 }
 
 void* VkRHIBackend::createBuffer(const RHIBufferDesc& desc) {
@@ -843,7 +916,7 @@ void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {
     imageBarrier.dstStageMask = getStageFlags(info.after_usage);
     imageBarrier.dstAccessMask = getAccessFlags(info.after_usage);
 
-    imageBarrier.oldLayout = toVkImageLayout(info.before_usage);
+    imageBarrier.oldLayout = (info.kind == RHI_BARRIER_ALIASING) ? VK_IMAGE_LAYOUT_UNDEFINED : toVkImageLayout(info.before_usage);
     imageBarrier.newLayout = toVkImageLayout(info.after_usage);
 
     imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -885,50 +958,92 @@ void VkRHIBackend::emitBarrier(const RHIBarrierInfo& info, void* cmdBuf) {
   }
 }
 
-void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type, void* colorAttachmentHandle) {
+void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type, void* const* colorAttachments, u32 colorAttachmentCount, void* depthAttachment) {
   VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
   if (commandBuffer == VK_NULL_HANDLE) {
     commandBuffer = m_CommandBuffer;
   }
 
-  if (type == RHI_PASS_RASTER) {
-    auto* img = static_cast<VkRHIImage*>(colorAttachmentHandle);
-    if (img == nullptr) return;
+  if (type != RHI_PASS_RASTER) return;
 
-    VkRenderingAttachmentInfo colorAttachment{};
-    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    colorAttachment.imageView = img->imageView;
-    colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachment.clearValue = { {0.05f, 0.05f, 0.08f, 1.0f} };
+  auto adoptExtent = [](VkExtent2D& extent, bool& haveExtent, VkExtent2D candidate) {
+    if (!haveExtent && candidate.width > 0 && candidate.height > 0) {
+      extent = candidate;
+      haveExtent = true;
+    }
+  };
 
-    VkRenderingInfo renderingInfo{};
-    renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-    renderingInfo.renderArea.offset = { 0, 0 };
-    renderingInfo.renderArea.extent = m_SwapchainExtent;
-    renderingInfo.layerCount = 1;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments = &colorAttachment;
-
-    vkCmdBeginRendering(commandBuffer, &renderingInfo);
-    m_InRendering = true;
-
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = static_cast<float>(m_SwapchainExtent.width);
-    viewport.height = static_cast<float>(m_SwapchainExtent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-
-    VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
-    scissor.extent = m_SwapchainExtent;
-    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+  if (colorAttachmentCount > RHI_MAX_COLOR_ATTACHMENTS) {
+    throw std::runtime_error("beginPass: colorAttachmentCount exceeds RHI_MAX_COLOR_ATTACHMENTS.");
   }
+
+  VkRenderingAttachmentInfo vkAttachments[RHI_MAX_COLOR_ATTACHMENTS]{};
+  VkExtent2D extent = m_SwapchainExtent;
+  bool haveExtent = false;
+
+  for (u32 i = 0; i < colorAttachmentCount; ++i) {
+    auto* img = static_cast<VkRHIImage*>(colorAttachments != nullptr ? colorAttachments[i] : nullptr);
+    if (img == nullptr || img->imageView == VK_NULL_HANDLE)
+    {throw std::runtime_error("beginPass: color attachment " + std::to_string(i) + " is null or has no image view (was bindMemory() called).");}
+
+    adoptExtent(extent, haveExtent, img->extent); 
+
+    VkRenderingAttachmentInfo& att = vkAttachments[i];
+    att.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    att.imageView = img->imageView;
+    att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    att.clearValue.color = (i == 0) ? VkClearColorValue{ {0.05f, 0.05f, 0.08f, 1.0f} } : VkClearColorValue{ {0.0f, 0.0f, 0.0f, 0.0f} };
+  }
+
+  auto* depthImg = static_cast<VkRHIImage*>(depthAttachment);
+  if (depthImg != nullptr && depthImg->imageView == VK_NULL_HANDLE)
+  {throw std::runtime_error("beginPass: depth attachment has no image view (was bindMemory() called).");}
+  
+  const bool hasDepthAttachment = (depthImg != nullptr);
+
+  VkRenderingAttachmentInfo depthInfo{};
+  if (hasDepthAttachment) {
+    depthInfo.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    depthInfo.imageView = depthImg->imageView;
+    depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    depthInfo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthInfo.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depthInfo.clearValue.depthStencil = { 1.0f, 0 };
+
+    adoptExtent(extent, haveExtent, depthImg->extent); 
+  }
+
+  if (colorAttachmentCount == 0 && !hasDepthAttachment) return;
+
+  VkRenderingInfo renderingInfo{};
+  renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+  renderingInfo.renderArea.offset = { 0, 0 };
+  renderingInfo.renderArea.extent = extent;
+  renderingInfo.layerCount = 1;
+  renderingInfo.colorAttachmentCount = colorAttachmentCount;
+  renderingInfo.pColorAttachments = colorAttachmentCount > 0 ? vkAttachments : nullptr;
+  renderingInfo.pDepthAttachment = hasDepthAttachment ? &depthInfo : nullptr;
+
+  vkCmdBeginRendering(commandBuffer, &renderingInfo);
+  m_InRendering = true;
+
+  VkViewport viewport{};
+  viewport.x = 0.0f;
+  viewport.y = 0.0f;
+  viewport.width = static_cast<float>(extent.width);
+  viewport.height = static_cast<float>(extent.height);
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+  vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+  VkRect2D scissor{};
+  scissor.offset = { 0, 0 };
+  scissor.extent = extent;
+  vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 }
+
 void VkRHIBackend::endPass(void* cmdBuf) {
   VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
   if (commandBuffer == VK_NULL_HANDLE) {
@@ -942,6 +1057,17 @@ void VkRHIBackend::endPass(void* cmdBuf) {
 }
 
 void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {
+  if (desc.colorAttachmentCount > RHI_MAX_COLOR_ATTACHMENTS) {
+    throw std::runtime_error("createPipeline: colorAttachmentCount exceeds RHI_MAX_COLOR_ATTACHMENTS.");
+  }
+
+  for (u32 i = 0; i < desc.colorAttachmentCount; ++i) {
+    if (desc.colorFormats[i] == RHI_FORMAT_UNDEFINED) {
+      throw std::runtime_error("createPipeline: colorFormats[" + std::to_string(i) +
+                               "] is UNDEFINED but colorAttachmentCount = " + std::to_string(desc.colorAttachmentCount) + ".");
+    }
+  }
+
   const std::vector<char> vertCode = readSpirvFile(desc.vertexShaderPath);
   const std::vector<char> fragCode = readSpirvFile(desc.fragmentShaderPath);
   VkShaderModule vertModule = createShaderModule(mDevice, vertCode);
@@ -1002,15 +1128,20 @@ void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {
   depthStencil.depthWriteEnable = hasDepth ? VK_TRUE : VK_FALSE;
   depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
 
-  VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-  colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-  colorBlendAttachment.blendEnable = VK_FALSE;
+  VkPipelineColorBlendAttachmentState colorBlendAttachments[RHI_MAX_COLOR_ATTACHMENTS]{};
+  VkFormat vkColorFormats[RHI_MAX_COLOR_ATTACHMENTS]{};
+
+  for (u32 i = 0; i < desc.colorAttachmentCount; ++i) {
+    colorBlendAttachments[i].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                              VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachments[i].blendEnable = VK_FALSE;
+    vkColorFormats[i] = toVkFormat(desc.colorFormats[i]);
+  }
 
   VkPipelineColorBlendStateCreateInfo colorBlend{};
   colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-  colorBlend.attachmentCount = 1;
-  colorBlend.pAttachments = &colorBlendAttachment;
+  colorBlend.attachmentCount = desc.colorAttachmentCount;
+  colorBlend.pAttachments = desc.colorAttachmentCount > 0 ? colorBlendAttachments : nullptr;
 
   VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
   VkPipelineDynamicStateCreateInfo dynamicState{};
@@ -1019,7 +1150,7 @@ void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {
   dynamicState.pDynamicStates = dynamicStates;
 
   VkPushConstantRange pushConstantRange{};
-  pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  pushConstantRange.stageFlags = toVkShaderStages(desc.pushConstantStages);
   pushConstantRange.offset = 0;
   pushConstantRange.size = desc.pushConstantSize;
 
@@ -1029,19 +1160,26 @@ void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &pushConstantRange;
   }
+  
+  VkDescriptorSetLayout vkSetLayout = static_cast<VkDescriptorSetLayout>(desc.descriptorSetLayout);
+  if (vkSetLayout != VK_NULL_HANDLE) {
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts    = &vkSetLayout;
+  }
 
   VkPipelineLayout layout = VK_NULL_HANDLE;
   if (vkCreatePipelineLayout(mDevice, &layoutInfo, nullptr, &layout) != VK_SUCCESS) {
+    vkDestroyShaderModule(mDevice, vertModule, nullptr);
+    vkDestroyShaderModule(mDevice, fragModule, nullptr);
     throw std::runtime_error("Failed to create pipeline layout.");
   }
 
-  const VkFormat colorFormat = toVkFormat(desc.colorFormat);
   const VkFormat depthFormatVk = hasDepth ? toVkFormat(desc.depthFormat) : VK_FORMAT_UNDEFINED;
 
   VkPipelineRenderingCreateInfo renderingInfo{};
   renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-  renderingInfo.colorAttachmentCount = 1;
-  renderingInfo.pColorAttachmentFormats = &colorFormat;
+  renderingInfo.colorAttachmentCount = desc.colorAttachmentCount;
+  renderingInfo.pColorAttachmentFormats = desc.colorAttachmentCount > 0 ? vkColorFormats : nullptr;
   renderingInfo.depthAttachmentFormat = depthFormatVk;
 
   VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -1066,6 +1204,7 @@ void* VkRHIBackend::createPipeline(const RHIPipelineDesc& desc) {
   vkDestroyShaderModule(mDevice, fragModule, nullptr);
 
   if (result != VK_SUCCESS) {
+    vkDestroyPipelineLayout(mDevice, layout, nullptr);
     throw std::runtime_error("Failed to create graphics pipeline.");
   }
 
@@ -1104,15 +1243,206 @@ void VkRHIBackend::pushConstants(void* cmdBuf, void* pipelineHandle, u32 stageFl
   VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
   auto* p = static_cast<VkRHIPipeline*>(pipelineHandle);
 
-  VkShaderStageFlags vkStages = 0;
-  if ((stageFlags & RHI_SHADER_STAGE_VERTEX) != 0)   vkStages |= VK_SHADER_STAGE_VERTEX_BIT;
-  if ((stageFlags & RHI_SHADER_STAGE_FRAGMENT) != 0) vkStages |= VK_SHADER_STAGE_FRAGMENT_BIT;
-
-  vkCmdPushConstants(commandBuffer, p->layout, vkStages, offset, size, data);
+  vkCmdPushConstants(commandBuffer, p->layout, toVkShaderStages(stageFlags), offset, size, data);
 }
 
 void VkRHIBackend::drawIndexed(void* cmdBuf, u32 indexCount, u32 instanceCount,
                                 u32 firstIndex, i32 vertexOffset, u32 firstInstance) {
   VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
   vkCmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+}
+
+void* VkRHIBackend::createSampler(const RHISamplerDesc& desc) {
+  VkSamplerCreateInfo samplerInfo{};
+  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  samplerInfo.magFilter = toVkFilter(desc.magFilter);
+  samplerInfo.minFilter = toVkFilter(desc.minFilter);
+  samplerInfo.mipmapMode = toVkMipmapMode(desc.mipmapMode);
+  samplerInfo.addressModeU = toVkAddressMode(desc.addressMode);
+  samplerInfo.addressModeV = toVkAddressMode(desc.addressMode);
+  samplerInfo.addressModeW = toVkAddressMode(desc.addressMode);
+  samplerInfo.mipLodBias = 0.0f;
+
+  const bool anisoEnabled = desc.maxAnisotropy > 1.0f;
+  samplerInfo.anisotropyEnable = anisoEnabled ? VK_TRUE : VK_FALSE;
+  samplerInfo.maxAnisotropy = anisoEnabled ? desc.maxAnisotropy : 1.0f;
+
+  samplerInfo.compareEnable = VK_FALSE;
+  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+  samplerInfo.minLod = 0.0f;
+  samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+  samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+  samplerInfo.unnormalizedCoordinates = VK_FALSE;
+
+  VkSampler sampler = VK_NULL_HANDLE;
+  if (vkCreateSampler(mDevice, &samplerInfo, nullptr, &sampler) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create Vulkan sampler.");
+  }
+
+  m_Samplers.push_back(sampler);
+  return static_cast<void*>(sampler);
+}
+
+void VkRHIBackend::destroySampler(void* handle) {
+  if (handle == nullptr) return;
+  VkSampler sampler = static_cast<VkSampler>(handle);
+  auto it = std::find(m_Samplers.begin(), m_Samplers.end(), sampler);
+  if (it != m_Samplers.end()) {
+    vkDestroySampler(mDevice, *it, nullptr);
+    m_Samplers.erase(it);
+  }
+}
+
+void* VkRHIBackend::createDescriptorSetLayout(const RHIDescriptorBinding* bindings, u32 bindingCount) {
+  std::vector<VkDescriptorSetLayoutBinding> vkBindings;
+  vkBindings.reserve(bindingCount);
+
+  for (u32 i = 0; i < bindingCount; ++i) {
+    VkDescriptorSetLayoutBinding b{};
+    b.binding         = bindings[i].binding;
+    b.descriptorType  = toVkDescriptorType(bindings[i].type);
+    b.descriptorCount = bindings[i].count > 0 ? bindings[i].count : 1;
+    b.stageFlags      = toVkShaderStages(bindings[i].stages);
+    vkBindings.push_back(b);
+  }
+
+  VkDescriptorSetLayoutCreateInfo info{};
+  info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  info.bindingCount = static_cast<u32>(vkBindings.size());
+  info.pBindings    = vkBindings.empty() ? nullptr : vkBindings.data();
+
+  VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+  if (vkCreateDescriptorSetLayout(mDevice, &info, nullptr, &layout) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create descriptor set layout.");
+  }
+
+  m_DescriptorSetLayouts.push_back(layout);
+  return static_cast<void*>(layout);
+}
+
+void VkRHIBackend::destroyDescriptorSetLayout(void* layoutHandle) {
+  if (layoutHandle == nullptr) return;
+
+  VkDescriptorSetLayout layout = static_cast<VkDescriptorSetLayout>(layoutHandle);
+  auto it = std::find(m_DescriptorSetLayouts.begin(), m_DescriptorSetLayouts.end(), layout);
+  if (it != m_DescriptorSetLayouts.end()) {
+    vkDestroyDescriptorSetLayout(mDevice, *it, nullptr);
+    m_DescriptorSetLayouts.erase(it);
+  }
+}
+
+void* VkRHIBackend::allocateDescriptorSet(void* layoutHandle) {
+  if (layoutHandle == nullptr) return nullptr;
+
+  if (m_DescriptorPool == VK_NULL_HANDLE) {
+    VkDescriptorPoolSize poolSizes[2]{};
+    poolSizes[0] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 512 };
+    poolSizes[1] = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 128 };
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    poolInfo.maxSets = 256;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = poolSizes;
+
+    if (vkCreateDescriptorPool(mDevice, &poolInfo, nullptr, &m_DescriptorPool) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create descriptor pool.");
+    }
+  }
+
+  VkDescriptorSetLayout layout = static_cast<VkDescriptorSetLayout>(layoutHandle);
+  VkDescriptorSetAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  allocInfo.descriptorPool = m_DescriptorPool;
+  allocInfo.descriptorSetCount = 1;
+  allocInfo.pSetLayouts = &layout;
+
+  VkDescriptorSet set = VK_NULL_HANDLE;
+  if (vkAllocateDescriptorSets(mDevice, &allocInfo, &set) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to allocate descriptor set.");
+  }
+
+  return static_cast<void*>(set);
+}
+
+void VkRHIBackend::freeDescriptorSet(void* setHandle) {
+  if (setHandle == nullptr || m_DescriptorPool == VK_NULL_HANDLE) return;
+  VkDescriptorSet set = static_cast<VkDescriptorSet>(setHandle);
+  vkFreeDescriptorSets(mDevice, m_DescriptorPool, 1, &set);
+}
+
+void VkRHIBackend::updateDescriptorSet(void* setHandle, const RHIDescriptorWrite* writes, u32 writeCount) {
+  if (setHandle == nullptr || writes == nullptr || writeCount == 0) return;
+
+  VkDescriptorSet set = static_cast<VkDescriptorSet>(setHandle);
+  std::vector<VkDescriptorImageInfo> imageInfos;
+  std::vector<VkDescriptorBufferInfo> bufferInfos;
+  std::vector<VkWriteDescriptorSet> vkWrites;
+
+  imageInfos.reserve(writeCount);
+  bufferInfos.reserve(writeCount);
+  vkWrites.reserve(writeCount);
+
+  for (u32 i = 0; i < writeCount; ++i) {
+    const RHIDescriptorWrite& w = writes[i];
+    VkWriteDescriptorSet out{};
+    out.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    out.dstSet = set;
+    out.dstBinding = w.binding;
+    out.dstArrayElement = 0;
+    out.descriptorCount = 1;
+    out.descriptorType = toVkDescriptorType(w.type);
+
+    switch (w.type) {
+    case RHI_DESCRIPTOR_COMBINED_IMAGE_SAMPLER: {
+      auto* img = static_cast<VkRHIImage*>(w.textureHandle);
+      auto sampler = static_cast<VkSampler>(w.samplerHandle);
+      if (img == nullptr || img->imageView == VK_NULL_HANDLE || sampler == VK_NULL_HANDLE) {
+        throw std::runtime_error("updateDescriptorSet: binding " + std::to_string(w.binding) + " needs a texture with an image view and a sampler.");
+      }
+
+      imageInfos.push_back(VkDescriptorImageInfo{
+        sampler,
+        img->imageView,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+      });
+      out.pImageInfo = &imageInfos.back();
+      vkWrites.push_back(out);
+      break;
+    }
+    
+    case RHI_DESCRIPTOR_UNIFORM_BUFFER: {
+      VkBuffer buffer = static_cast<VkBuffer>(w.bufferHandle);
+      if (buffer == VK_NULL_HANDLE)
+        {throw std::runtime_error("updateDescriptorSet: binding " + std::to_string(w.binding) + " needs a buffer handle.");}
+
+      bufferInfos.push_back(VkDescriptorBufferInfo{buffer, w.bufferOffset, w.bufferRange > 0 ? w.bufferRange : VK_WHOLE_SIZE});
+      out.pBufferInfo = &bufferInfos.back();
+      vkWrites.push_back(out);
+      break;
+    }
+    }
+  } 
+
+  if (!vkWrites.empty()) {
+    vkUpdateDescriptorSets(mDevice, static_cast<u32>(vkWrites.size()), vkWrites.data(), 0, nullptr);
+  }
+}
+
+void VkRHIBackend::bindDescriptorSet(void* cmdBuf, void* pipelineHandle, u32 setIndex, void* setHandle) {
+  if (pipelineHandle == nullptr || setHandle == nullptr) return;
+  if (setIndex != 0) {
+    throw std::runtime_error("bindDescriptorSet: pipeline layouts currently expose only set 0.");
+  }
+
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf); 
+  if (commandBuffer == VK_NULL_HANDLE) {
+    commandBuffer = m_CommandBuffer;
+  }
+
+  auto* p = static_cast<VkRHIPipeline*>(pipelineHandle);
+  VkDescriptorSet set = static_cast<VkDescriptorSet>(setHandle);
+
+  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, setIndex, 1, &set, 0, nullptr);
 }
