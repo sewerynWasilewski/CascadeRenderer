@@ -543,8 +543,6 @@ void RenderGraph::execute(void* cmdBuf) {
     const RHIPassType rhiType = (pass.flags & RG_PASS_RASTER)  ? RHI_PASS_RASTER  :
                                 (pass.flags & RG_PASS_COMPUTE) ? RHI_PASS_COMPUTE : RHI_PASS_COPY;
 
-    // First resource this pass writes as a color attachment - single-attachment only for
-    // now, MRT (multiple color attachments) needs beginPass() to take an array later.
     void* colorAttachments[RHI_MAX_COLOR_ATTACHMENTS]{};
     u32 colorAttachmentCount = 0;
     void* depthAttachment = nullptr;
@@ -557,6 +555,8 @@ void RenderGraph::execute(void* cmdBuf) {
       if ((mUsages[u].usage & RHI_USAGE_COLOR_ATTACHMENT) != 0) {
         if (colorAttachmentCount < RHI_MAX_COLOR_ATTACHMENTS) {
           colorAttachments[colorAttachmentCount++] = handle;
+        } else { 
+          throw std::runtime_error("beginPass: colorAttachmentCount exceeds RHI_MAX_COLOR_ATTACHMENTS.");
         }
       } else if ((mUsages[u].usage & RHI_USAGE_DEPTH_ATTACHMENT) != 0) {
         if (depthAttachment == nullptr) {

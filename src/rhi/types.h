@@ -160,7 +160,7 @@ struct RHIPipelineDesc {
   u32                        vertexAttributeCount = 0;
   u32                        vertexStride         = 0;                // bytes per vertex
   void* descriptorSetLayout = nullptr;
-  u32   pushConstantStages  = RHI_SHADER_STAGE_VERTEX;
+  RHIShaderStage             pushConstantStages = RHI_SHADER_STAGE_VERTEX;
 };
 
 enum RHIFilterMode : u32 {

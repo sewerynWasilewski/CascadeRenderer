@@ -113,13 +113,12 @@ VkDescriptorType toVkDescriptorType(RHIDescriptorType type) {
 
 VkShaderStageFlags toVkShaderStages(u32 stages) {
   VkShaderStageFlags flags = 0;
-  if ((stages & RHI_SHADER_STAGE_VERTEX) != 0) {
-    flags |= VK_SHADER_STAGE_VERTEX_BIT;
-  }
-  if ((stages & RHI_SHADER_STAGE_FRAGMENT) != 0) {
-    flags |= VK_SHADER_STAGE_FRAGMENT_BIT;
-  }
-  return flags != 0 ? flags : VK_SHADER_STAGE_FRAGMENT_BIT;
+  if ((stages & RHI_SHADER_STAGE_VERTEX) != 0) flags |= VK_SHADER_STAGE_VERTEX_BIT;
+  if ((stages & RHI_SHADER_STAGE_FRAGMENT) != 0) flags |= VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  if (flags == 0) throw std::runtime_error("Error parsing RHIShaderStage to VkShaderStages");
+
+  return flags;
 }
 
 } // namespace
@@ -965,85 +964,84 @@ void VkRHIBackend::beginPass(void* cmdBuf, RHIPassType type, void* const* colorA
     commandBuffer = m_CommandBuffer;
   }
 
-  if (type == RHI_PASS_RASTER) {
-    if (colorAttachmentCount > RHI_MAX_COLOR_ATTACHMENTS) {
-      throw std::runtime_error("beginPass: colorAttachmentCount exceeds RHI_MAX_COLOR_ATTACHMENTS.");
+  if (type != RHI_PASS_RASTER) return;
+
+  auto adoptExtent = [](VkExtent2D& extent, bool& haveExtent, VkExtent2D candidate) {
+    if (!haveExtent && candidate.width > 0 && candidate.height > 0) {
+      extent = candidate;
+      haveExtent = true;
     }
+  };
 
-    VkRenderingAttachmentInfo vkAttachments[RHI_MAX_COLOR_ATTACHMENTS]{};
-    VkExtent2D extent = m_SwapchainExtent;
-    bool haveExtent = false;
-
-    for (u32 i = 0; i < colorAttachmentCount; ++i) {
-      auto* img = static_cast<VkRHIImage*>(colorAttachments != nullptr ? colorAttachments[i] : nullptr);
-      if (img == nullptr || img->imageView == VK_NULL_HANDLE) {
-        throw std::runtime_error("beginPass: color attachment " + std::to_string(i) + " is null or has no image view (was bindMemory() called).");
-      }
-
-      if (!haveExtent && img->extent.width > 0 && img->extent.height > 0) {
-        extent = img->extent;
-        haveExtent = true;
-      }
-
-      VkRenderingAttachmentInfo& att = vkAttachments[i];
-      att.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-      att.imageView = img->imageView;
-      att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-      att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-      att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-      att.clearValue.color = (i == 0) ? VkClearColorValue{ {0.05f, 0.05f, 0.08f, 1.0f} } : VkClearColorValue{ {0.0f, 0.0f, 0.0f, 0.0f} };
-    }
-
-    auto* depthImg = static_cast<VkRHIImage*>(depthAttachment);
-    if (depthImg != nullptr && depthImg->imageView == VK_NULL_HANDLE) {
-      throw std::runtime_error("beginPass: depth attachment has no image view (was bindMemory() called).");
-    }
-    const bool hasDepthAttachment = (depthImg != nullptr);
-
-    VkRenderingAttachmentInfo depthInfo{};
-    if (hasDepthAttachment) {
-      depthInfo.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-      depthInfo.imageView = depthImg->imageView;
-      depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-      depthInfo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-      depthInfo.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-      depthInfo.clearValue.depthStencil = { 1.0f, 0 };
-
-      if (!haveExtent && depthImg->extent.width > 0 && depthImg->extent.height > 0) {
-        extent = depthImg->extent;
-      }
-    }
-
-    if (colorAttachmentCount == 0 && !hasDepthAttachment) {
-      return;
-    }
-
-    VkRenderingInfo renderingInfo{};
-    renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-    renderingInfo.renderArea.offset = { 0, 0 };
-    renderingInfo.renderArea.extent = extent;
-    renderingInfo.layerCount = 1;
-    renderingInfo.colorAttachmentCount = colorAttachmentCount;
-    renderingInfo.pColorAttachments = colorAttachmentCount > 0 ? vkAttachments : nullptr;
-    renderingInfo.pDepthAttachment = hasDepthAttachment ? &depthInfo : nullptr;
-
-    vkCmdBeginRendering(commandBuffer, &renderingInfo);
-    m_InRendering = true;
-
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = static_cast<float>(extent.width);
-    viewport.height = static_cast<float>(extent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-
-    VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
-    scissor.extent = extent;
-    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+  if (colorAttachmentCount > RHI_MAX_COLOR_ATTACHMENTS) {
+    throw std::runtime_error("beginPass: colorAttachmentCount exceeds RHI_MAX_COLOR_ATTACHMENTS.");
   }
+
+  VkRenderingAttachmentInfo vkAttachments[RHI_MAX_COLOR_ATTACHMENTS]{};
+  VkExtent2D extent = m_SwapchainExtent;
+  bool haveExtent = false;
+
+  for (u32 i = 0; i < colorAttachmentCount; ++i) {
+    auto* img = static_cast<VkRHIImage*>(colorAttachments != nullptr ? colorAttachments[i] : nullptr);
+    if (img == nullptr || img->imageView == VK_NULL_HANDLE)
+    {throw std::runtime_error("beginPass: color attachment " + std::to_string(i) + " is null or has no image view (was bindMemory() called).");}
+
+    adoptExtent(extent, haveExtent, img->extent); 
+
+    VkRenderingAttachmentInfo& att = vkAttachments[i];
+    att.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    att.imageView = img->imageView;
+    att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    att.clearValue.color = (i == 0) ? VkClearColorValue{ {0.05f, 0.05f, 0.08f, 1.0f} } : VkClearColorValue{ {0.0f, 0.0f, 0.0f, 0.0f} };
+  }
+
+  auto* depthImg = static_cast<VkRHIImage*>(depthAttachment);
+  if (depthImg != nullptr && depthImg->imageView == VK_NULL_HANDLE)
+  {throw std::runtime_error("beginPass: depth attachment has no image view (was bindMemory() called).");}
+  
+  const bool hasDepthAttachment = (depthImg != nullptr);
+
+  VkRenderingAttachmentInfo depthInfo{};
+  if (hasDepthAttachment) {
+    depthInfo.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    depthInfo.imageView = depthImg->imageView;
+    depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    depthInfo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthInfo.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depthInfo.clearValue.depthStencil = { 1.0f, 0 };
+
+    adoptExtent(extent, haveExtent, depthImg->extent); 
+  }
+
+  if (colorAttachmentCount == 0 && !hasDepthAttachment) return;
+
+  VkRenderingInfo renderingInfo{};
+  renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+  renderingInfo.renderArea.offset = { 0, 0 };
+  renderingInfo.renderArea.extent = extent;
+  renderingInfo.layerCount = 1;
+  renderingInfo.colorAttachmentCount = colorAttachmentCount;
+  renderingInfo.pColorAttachments = colorAttachmentCount > 0 ? vkAttachments : nullptr;
+  renderingInfo.pDepthAttachment = hasDepthAttachment ? &depthInfo : nullptr;
+
+  vkCmdBeginRendering(commandBuffer, &renderingInfo);
+  m_InRendering = true;
+
+  VkViewport viewport{};
+  viewport.x = 0.0f;
+  viewport.y = 0.0f;
+  viewport.width = static_cast<float>(extent.width);
+  viewport.height = static_cast<float>(extent.height);
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+  vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+  VkRect2D scissor{};
+  scissor.offset = { 0, 0 };
+  scissor.extent = extent;
+  vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 }
 
 void VkRHIBackend::endPass(void* cmdBuf) {
@@ -1245,11 +1243,7 @@ void VkRHIBackend::pushConstants(void* cmdBuf, void* pipelineHandle, u32 stageFl
   VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
   auto* p = static_cast<VkRHIPipeline*>(pipelineHandle);
 
-  VkShaderStageFlags vkStages = 0;
-  if ((stageFlags & RHI_SHADER_STAGE_VERTEX) != 0)   vkStages |= VK_SHADER_STAGE_VERTEX_BIT;
-  if ((stageFlags & RHI_SHADER_STAGE_FRAGMENT) != 0) vkStages |= VK_SHADER_STAGE_FRAGMENT_BIT;
-
-  vkCmdPushConstants(commandBuffer, p->layout, vkStages, offset, size, data);
+  vkCmdPushConstants(commandBuffer, p->layout, toVkShaderStages(stageFlags), offset, size, data);
 }
 
 void VkRHIBackend::drawIndexed(void* cmdBuf, u32 indexCount, u32 instanceCount,
@@ -1400,7 +1394,8 @@ void VkRHIBackend::updateDescriptorSet(void* setHandle, const RHIDescriptorWrite
     out.descriptorCount = 1;
     out.descriptorType = toVkDescriptorType(w.type);
 
-    if (w.type == RHI_DESCRIPTOR_COMBINED_IMAGE_SAMPLER) {
+    switch (w.type) {
+    case RHI_DESCRIPTOR_COMBINED_IMAGE_SAMPLER: {
       auto* img = static_cast<VkRHIImage*>(w.textureHandle);
       auto sampler = static_cast<VkSampler>(w.samplerHandle);
       if (img == nullptr || img->imageView == VK_NULL_HANDLE || sampler == VK_NULL_HANDLE) {
@@ -1412,27 +1407,23 @@ void VkRHIBackend::updateDescriptorSet(void* setHandle, const RHIDescriptorWrite
         img->imageView,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
       });
+      out.pImageInfo = &imageInfos.back();
       vkWrites.push_back(out);
-    } else if (w.type == RHI_DESCRIPTOR_UNIFORM_BUFFER) {
+      break;
+    }
+    
+    case RHI_DESCRIPTOR_UNIFORM_BUFFER: {
       VkBuffer buffer = static_cast<VkBuffer>(w.bufferHandle);
-      if (buffer == VK_NULL_HANDLE) {
-        throw std::runtime_error("updateDescriptorSet: binding " + std::to_string(w.binding) + " needs a buffer handle.");
-      }
+      if (buffer == VK_NULL_HANDLE)
+        {throw std::runtime_error("updateDescriptorSet: binding " + std::to_string(w.binding) + " needs a buffer handle.");}
 
       bufferInfos.push_back(VkDescriptorBufferInfo{buffer, w.bufferOffset, w.bufferRange > 0 ? w.bufferRange : VK_WHOLE_SIZE});
+      out.pBufferInfo = &bufferInfos.back();
       vkWrites.push_back(out);
+      break;
     }
-  }
-
-  size_t imgIdx = 0;
-  size_t bufIdx = 0;
-  for (auto& out : vkWrites) {
-    if (out.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
-      out.pImageInfo = &imageInfos[imgIdx++];
-    } else if (out.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
-      out.pBufferInfo = &bufferInfos[bufIdx++];
     }
-  }
+  } 
 
   if (!vkWrites.empty()) {
     vkUpdateDescriptorSets(mDevice, static_cast<u32>(vkWrites.size()), vkWrites.data(), 0, nullptr);
@@ -1445,7 +1436,7 @@ void VkRHIBackend::bindDescriptorSet(void* cmdBuf, void* pipelineHandle, u32 set
     throw std::runtime_error("bindDescriptorSet: pipeline layouts currently expose only set 0.");
   }
 
-  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf);
+  VkCommandBuffer commandBuffer = static_cast<VkCommandBuffer>(cmdBuf); 
   if (commandBuffer == VK_NULL_HANDLE) {
     commandBuffer = m_CommandBuffer;
   }
